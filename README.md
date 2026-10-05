@@ -1,0 +1,206 @@
+# Delsana Management
+
+A small, production-ready PWA for the Delsana cosmetics business (Mahdi's wholesale shop + Helia's Instagram store).
+Plain HTML/CSS/vanilla JavaScript, no framework, no build step, no `npm`. Backend is **Supabase** (Postgres + RLS + Realtime).
+
+- Persian UI, RTL, light/dark theme, mobile-first (works on phone and desktop).
+- Two accounts only: `mahdi` (full access) and `helia` (own profit only).
+- All money math lives in **one** pure file, `calc.js`, reused by the UI, by `tests.html`, and mirrored by the server-side `create_order` RPC.
+
+---
+
+## 1. Files
+
+| File | Purpose |
+|------|---------|
+| `index.html` | App shell (boot, login, tab bar, view hosts) |
+| `style.css` | Design system, RTL, light/dark themes |
+| `app.js` | **Config object**, auth, navigation, realtime, service worker registration |
+| `db.js` | Supabase data layer (queries + RPC calls) |
+| `calc.js` | Pure money calculations (single source of truth) |
+| `ui.js` | DOM helpers, formatting, toasts, dialogs, validation, CSV |
+| `screens.js` | The six screens (products, new order, orders, accounts, reports, settings) |
+| `setup.sql` | Schema, RLS policies, indexes, triggers and all RPCs |
+| `manifest.json`, `sw.js` | PWA manifest + service worker (offline shell) |
+| `icon.svg`, `icon-192.png`, `icon-512.png` | Icons |
+| `tests.html` | Automated checks for the 10 worked money examples + invariants |
+| `README.md` | This file |
+
+---
+
+## 2. Create the backend (≈10 minutes)
+
+### 2.1 Create the Supabase project
+1. Go to <https://supabase.com> → **New project** → pick a name and a strong database password.
+2. Wait for the project to finish provisioning.
+
+### 2.2 Run `setup.sql`
+1. Supabase dashboard → **SQL Editor** → **New query**.
+2. Paste the whole content of `setup.sql` → **Run**.
+   You should see `Success. No rows returned`.
+3. This creates: `profiles`, `products`, `product_costs`, `orders`, `order_private`, `settings`,
+   the `base_price` trigger, all RLS policies, the indexes, and every RPC
+   (`create_order`, `set_order_status`, `cancel_order`, `bulk_set_status`, `set_tracking`,
+   `set_pin`, `add_product`, `update_product`, `set_hp`, `set_cost`, `bulk_cost_update`).
+
+### 2.3 Create the two users
+1. Dashboard → **Authentication → Users → Add user**.
+   - e.g. `mahdi@example.com` + a strong password → **Create user** (no need to confirm the email).
+   - e.g. `helia@example.com` + a strong password → **Create user**.
+2. **There is no sign-up screen on purpose.** The app has exactly two users.
+
+### 2.4 Give each user a role (required!)
+The app reads the role from `profiles`. Run this in the SQL Editor with the real `user_id`
+values from **Authentication → Users** (the UUID column):
+
+```sql
+insert into public.profiles (user_id, role) values
+  ('<mahdi-user-uuid>', 'mahdi'),
+  ('<helia-user-uuid>', 'helia')
+on conflict (user_id) do update set role = excluded.role;
+```
+
+Without this row the user can log in but will see: *"your profile is not registered"*.
+
+### 2.5 Realtime
+`setup.sql` already adds `orders`, `products` and `settings` to the `supabase_realtime` publication.
+If your project disabled Realtime, enable it under **Database → Replication**.
+
+---
+
+## 3. Configure the frontend
+
+Open `app.js` and fill the two values at the very top:
+
+```js
+const CONFIG = {
+  supabaseUrl: 'https://abcdefgh.supabase.co',      // Dashboard -> Project Settings -> API
+  supabaseAnonKey: 'eyJ...'                          // the "anon public" key only
+};
+```
+
+Rules:
+- **Never** put the `service_role` key in the frontend. Only the anon key.
+- The app refuses to start (and shows a Persian message) while these still read `YOUR_…`.
+
+---
+
+## 4. Deploy to GitHub Pages
+
+1. Push these files to a GitHub repository.
+2. Repository → **Settings → Pages → Source: Deploy from a branch** → `main` / `/(root)` → **Save**.
+3. Open `https://<user>.github.io/<repo>/`.
+
+Everything is referenced with **relative paths**, so a sub-path works out of the box.
+
+---
+
+## 5. Install as an app (PWA)
+
+- **Android / Chrome:** open the site → menu → *Add to Home screen* / *Install app*.
+- **Windows / Edge or Chrome:** address-bar *Install* icon → *Install*.
+- The service worker caches the static shell: after the first visit the app opens **offline**
+  (data needs a connection; Supabase API calls are never cached).
+
+---
+
+## 6. Verify the money rules
+
+Open `tests.html` in a browser. It runs all **10 worked examples** from the specification plus the
+invariant `owe_to_mahdi + helia_share == payout` for each one, and shows `PASS` / `FAIL`.
+
+Run it again after changing anything in `calc.js`.
+
+---
+
+## 7. How the money works (short version)
+
+Per product: `base = cost + mp`, `unit_sum = cost + mp + hp`.
+
+| Field | Formula |
+|-------|---------|
+| `shipping_fee` | `post_fee` if shipping is `post`, else `0` |
+| `sub` | `Σ q · unit_sum`, `net = sub − discount` |
+| Cash total | `net + shipping_fee` |
+| Snapp total | `roundToStep(net · snapp_multiplier, rounding_step) + shipping_fee` |
+| `payout` (Snapp settles) | `net + shipping_fee` (same as a cash sale) |
+| `owe` (Helia → Mahdi) | `Σ q · base − mahdi_discount + shipping_fee` |
+| `h_share` | `Σ q · hp − helia_discount` |
+| `m_profit` | `Σ q · mp − mahdi_discount` |
+
+Discount bearer: `helia` → all on Helia, `mahdi` → all on Mahdi, `split` → `floor(D/2)` on Mahdi.
+
+Everything is recomputed **on the server** inside `create_order`; the client numbers are never trusted.
+
+### Status flow
+
+```
+new ───────────────► paid ──► settled ──► shipped ──► delivered
+awaiting_snapp ─────► paid       │
+        └──────────► cancelled ◄─┘ (from new / awaiting_snapp / paid / settled)
+```
+
+- Cash orders start at `new` or `paid` (chosen when creating); Snapp orders start at `awaiting_snapp`.
+- Marking a **post** order as shipped requires a tracking code; for courier it is optional.
+- Cancelling restores stock and removes the order from reports.
+
+---
+
+## 8. Screens
+
+| Tab | What it does |
+|-----|--------------|
+| **محصولات** | Live prices (cash + Snapp), search, low-stock highlight. Mahdi edits name/stock/cost/mp, adds and archives products, bulk price update (% or fixed). Helia edits only her profit. |
+| **سفارش جدید** | Product picker + quantities, customer/phone/address/10-digit postal code, shipping, payment, Snapp multiplier override, discount + bearer, live summary, over-stock warning (does not block). |
+| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters, editable tracking code, status buttons, pin + reason, badge, cancel with stock restore, CSV export. |
+| **حساب‌ها** | Helia's debt to Mahdi (`paid`), Snapp pending (`awaiting_snapp`), and (Mahdi) *Ready to ship* (`settled`); per-row and bulk "mark as …" buttons. |
+| **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, Helia's profit, top-5 products, cash vs Snapp, post vs courier, discounts by bearer. Mahdi's profit only on Mahdi's account. |
+| **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step`. Applies to new orders only (each order snapshots the values it used). |
+
+**Roles.** Mahdi sees cost, his profit and his profit totals. Helia sees "price from Mahdi" (`base`) and her own profit — never `product_costs` or `order_private`. This is enforced by **RLS in the database**, not only in the UI: Helia's session cannot read those tables, and all money/status writes go through `security definer` RPCs.
+
+---
+
+## 9. Assumptions (decisions taken where the spec was open)
+
+1. **Order line snapshots are split across two tables.** `orders.items` holds the Helia-safe line
+   `{product_id, name, qty, base, hp}`; `order_private.items` holds `{product_id, qty, cost, mp}` for
+   Mahdi. Storing cost/mp inside `orders.items` would leak Mahdi's cost to Helia through the API.
+2. **No `UPDATE`/`DELETE` policies on `orders`, `products`, `profiles`, `product_costs`.**
+   Every write goes through a `security definer` RPC, so validation, stock and history stay atomic.
+3. **Cancellation** is allowed only from `new`, `awaiting_snapp`, `paid`, `settled`.
+   Shipped/delivered orders are terminal — pin the order to follow up instead (the error message says so).
+4. **Classic scripts, not ES modules** (`<script src>` instead of `type="module"`) so `tests.html`
+   also works when opened directly from disk (`file://`), where module imports are blocked by CORS.
+5. **"Ready to ship"** (settled, not yet shipped) is shown as a third bucket on the Accounts screen
+   for Mahdi only; Helia sees the two buckets that concern her.
+6. **Bulk cost update**: percent → `round(cost · (1 + v/100))`, fixed → `round(cost + v)`;
+   negative results clamp to `0`. The SQL RPC applies the same rounding.
+7. **Report ranges are computed in the viewer's local timezone** (Today/7/30/custom are local dates).
+8. **CSV export** contains *all* orders (cancelled included), UTF-8 with BOM for Excel.
+   Helia's export omits `cost_total` / `mahdi_profit`.
+9. **Accounts buttons**: the debt bucket marks orders `settled` ("mark as settled"), the Snapp bucket
+   marks them `paid` ("money received"). Orders can be selected individually before bulk actions.
+10. **Over-stock quantity is a warning, not a blocker** in the form; the server still refuses the order
+    and returns a Persian error if stock is insufficient.
+11. **Realtime + polling**: `orders`, `products` and `settings` are subscribed over Supabase Realtime
+    (600 ms debounce) with a 45-second polling fallback; the service worker never caches API calls,
+    so data is always network-first.
+12. **Products are archived, never deleted**, so old orders keep valid product names.
+13. **Pinning, status changes and tracking edits are allowed for both partners** (the spec restricts
+    nothing here); only cost/profit data is role-restricted.
+14. **Users are created manually** in the Supabase dashboard and their `profiles` row is inserted by
+    hand — the app never signs people up.
+
+---
+
+## 10. Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| "ابتدا مقادیر Supabase را در ابتدای فایل app.js تنظیم کنید" | Fill `CONFIG` at the top of `app.js`. |
+| "پروفایل شما در سیستم ثبت نشده است" | Insert the row into `profiles` (step 2.4). |
+| "ایمیل یا رمز عبور اشتباه است" | Check the user exists under **Authentication → Users**. |
+| Changes by the other partner do not appear | Wait ~1 s (debounce) or tap the refresh button; check Realtime is enabled. |
+| Old orders changed after editing settings | They should not — each order stores its own `shipping_fee`, `snapp_multiplier`, `rounding_step`. Verify the RPC ran (`setup.sql` re-run). |
+| Icons/manifest 404 on Pages | Make sure all files are in the deployed folder and paths stay relative. |

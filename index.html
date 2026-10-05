@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>مدیریت دلسانا</title>
+<meta name="description" content="مدیریت فروش، موجودی، سفارش‌ها و حساب‌های دلسانا">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#b83280" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17171b" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="دلسانا">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" sizes="512x512" href="icon-512.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ================= boot / loading ================= -->
+<div id="boot" class="boot" role="status" aria-live="polite">
+  <div class="spinner" aria-hidden="true"></div>
+  <p>در حال بارگذاری…</p>
+</div>
+
+<!-- ================= login ================= -->
+<section id="screen-login" class="login" hidden>
+  <div class="login-card">
+    <div class="brand">
+      <img src="icon.svg" alt="" width="72" height="72">
+      <h1>مدیریت دلسانا</h1>
+      <p>فروشگاه مهدی &amp; اینستاگرام هلیا</p>
+    </div>
+    <form id="login-form" novalidate autocomplete="on">
+      <div class="field">
+        <label for="login-email">ایمیل</label>
+        <input id="login-email" name="email" type="email" inputmode="email" autocomplete="username"
+               dir="ltr" placeholder="you@example.com" required>
+      </div>
+      <div class="field">
+        <label for="login-password">رمز عبور</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password"
+               placeholder="••••••••" required>
+      </div>
+      <p id="login-error" class="form-error" role="alert" hidden></p>
+      <button type="submit" class="btn primary block" id="login-btn">ورود</button>
+    </form>
+  </div>
+</section>
+
+<!-- ================= app shell ================= -->
+<div id="main" class="main" hidden>
+  <header class="topbar">
+    <div class="topbar-brand">
+      <img src="icon.svg" alt="" width="28" height="28">
+      <strong id="view-title">محصولات</strong>
+      <span id="user-chip" class="chip" hidden></span>
+    </div>
+    <div class="topbar-actions">
+      <button id="btn-refresh" class="icon-btn" type="button" title="به‌روزرسانی" aria-label="به‌روزرسانی">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path>
+        </svg>
+      </button>
+      <button id="btn-logout" class="btn ghost small" type="button">خروج</button>
+    </div>
+  </header>
+
+  <nav class="tabbar" id="tabbar" aria-label="ناوبری اصلی">
+    <button class="tab" type="button" data-view="products" aria-label="محصولات">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 8.5 12 3 3 8.5v7L12 21l9-5.5v-7Z"></path><path d="M3 8.5 12 14l9-5.5"></path><path d="M12 14v7"></path>
+      </svg><span>محصولات</span>
+    </button>
+    <button class="tab" type="button" data-view="neworder" aria-label="سفارش جدید">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9"></circle><path d="M12 8v8M8 12h8"></path>
+      </svg><span>جدید</span>
+    </button>
+    <button class="tab" type="button" data-view="orders" aria-label="سفارش‌ها">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1Z"></path><path d="M8 6H6a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1h-2"></path>
+        <path d="M9 12h6M9 16h4"></path>
+      </svg><span>سفارش‌ها</span><b id="badge-pinned" class="badge" hidden>0</b>
+    </button>
+    <button class="tab" type="button" data-view="accounts" aria-label="حساب‌ها">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="6" width="18" height="13" rx="2"></rect><path d="M3 10h18"></path>
+        <circle cx="17" cy="14.5" r="1.2"></circle>
+      </svg><span>حساب‌ها</span>
+    </button>
+    <button class="tab" type="button" data-view="reports" aria-label="گزارش‌ها">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2"></path>
+      </svg><span>گزارش‌ها</span>
+    </button>
+    <button class="tab" type="button" data-view="settings" aria-label="تنظیمات">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"></path>
+      </svg><span>تنظیمات</span>
+    </button>
+  </nav>
+
+  <main id="content" class="content">
+    <section id="view-products" class="view" hidden></section>
+    <section id="view-neworder" class="view" hidden></section>
+    <section id="view-orders" class="view" hidden></section>
+    <section id="view-accounts" class="view" hidden></section>
+    <section id="view-reports" class="view" hidden></section>
+    <section id="view-settings" class="view" hidden></section>
+  </main>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+<div id="modal-root"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+<script src="calc.js"></script>
+<script src="ui.js"></script>
+<script src="db.js"></script>
+<script src="screens.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

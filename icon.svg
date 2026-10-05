@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="دلسانا">
+  <rect width="512" height="512" rx="112" fill="#b83280"/>
+  <g fill="#ffffff">
+    <rect x="120" y="300" width="64" height="92" rx="16"/>
+    <rect x="224" y="236" width="64" height="156" rx="16"/>
+    <rect x="328" y="172" width="64" height="220" rx="16"/>
+  </g>
+  <path d="M120 236c48-52 96-52 144 0s96 52 144 0" fill="none" stroke="#ffffff"
+        stroke-width="26" stroke-linecap="round" opacity=".55"/>
+</svg>
