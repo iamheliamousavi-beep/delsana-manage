@@ -7,7 +7,8 @@
 <style>
   body { font-family: Vazirmatn, Tahoma, sans-serif; margin: 0; padding: 16px; background: #fafafa; color: #222; }
   h1 { font-size: 20px; }
-  table { border-collapse: collapse; width: 100%; font-size: 14px; background: #fff; }
+  h2 { font-size: 16px; margin: 22px 0 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; background: #fff; margin-bottom: 8px; }
   th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: center; }
   th { background: #f0f0f0; }
   .pass { color: #0a7d32; font-weight: bold; }
@@ -21,23 +22,34 @@
 </head>
 <body>
 <h1>تست محاسبات مالی — Delsana Management</h1>
-<p class="inv">ده مثال کارشده از پروژه + بررسی ثابت <code>owe + h_share == net + shipping_fee</code> برای هر مثال.</p>
+<p class="inv">مثال‌های کارشده از پروژه (بخش ۲) + بررسی ثابت <code>owe + h_share == net + shipping_fee</code> برای هر مثال + حلقه بازگشتی گرد کردن.</p>
 <div id="summary" class="box">در حال اجرا…</div>
+
+<h2>۱) مثال‌های پولی</h2>
 <table id="results">
   <thead>
     <tr>
-      <th>#</th><th>شرح</th><th>کل مشتری</th><th>پرداختی به مهدی</th><th>سهم هلیا</th>
-      <th>سود مهدی</th><th>سهم بن</th><th>کارمزد بن</th><th>ثابت</th><th>نتیجه</th>
+      <th>#</th><th>شرح</th><th>کل مشتری</th><th>پرداختی به مغازه</th><th>سهم پیج</th>
+      <th>تسویه اسنپ‌پی</th><th>شبکه</th><th>ثابت</th><th>نتیجه</th>
     </tr>
   </thead>
   <tbody></tbody>
 </table>
+
+<h2>۲) گرد کردن و حلقه بازگشتی</h2>
+<table id="extra">
+  <thead>
+    <tr><th>#</th><th>شرح</th><th>نتیجه</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
 <script src="calc.js"></script>
 <script>
 (function () {
   'use strict';
-  var COST = 400000, MP = 100000, HP = 150000, POST = 190000, STEP = 5000;
-  var ITEM = { qty: 1, cost: COST, mp: MP, hp: HP, base: COST + MP };
+  var BASE = 500000, HP = 150000, POST = 190000, STEP = 5000;
+  var ITEM = { qty: 1, base: BASE, hp: HP };
 
   function make(extra) {
     var o = {
@@ -49,76 +61,153 @@
     return o;
   }
 
-  /* The 10 worked examples from the specification. */
+  /* The 13 worked examples from the specification (section 2). */
   var CASES = [
-    { d: 'نقد، پست، بدون تخفیف', in: {}, exp: { customer_total: 840000, owe: 690000, h_share: 150000, m_profit: 100000 } },
-    { d: 'نقد، پیک، بدون تخفیف', in: { shipping_method: 'courier' }, exp: { customer_total: 650000, owe: 500000, h_share: 150000, m_profit: 100000 } },
-    { d: 'اسنپ‌پی ۱٫۱۵، پست، بدون تخفیف', in: { payment_method: 'snapp' }, exp: { customer_total: 940000, payout: 840000, owe: 690000, h_share: 150000, m_profit: 100000 } },
-    { d: 'اسنپ‌پی ۱٫۱۵، پیک، بدون تخفیف', in: { payment_method: 'snapp', shipping_method: 'courier' }, exp: { customer_total: 750000, payout: 650000, owe: 500000 } },
-    { d: 'اسنپ‌پی ۱٫۲، پست، بدون تخفیف', in: { payment_method: 'snapp', snapp_multiplier: 1.2 }, exp: { customer_total: 970000, payout: 840000 } },
-    { d: 'نقد، پست، تخفیف ۵۰٬۰۰۰ بر عهده هلیا', in: { discount: 50000, discount_bearer: 'helia' }, exp: { customer_total: 790000, owe: 690000, h_share: 100000, m_profit: 100000 } },
-    { d: 'نقد، پست، تخفیف ۵۰٬۰۰۰ بر عهده مهدی', in: { discount: 50000, discount_bearer: 'mahdi' }, exp: { customer_total: 790000, owe: 640000, h_share: 150000, m_profit: 50000 } },
-    { d: 'نقد، پست، تخفیف ۵۰٬۰۰۰ تقسیم مساوی', in: { discount: 50000, discount_bearer: 'split' }, exp: { customer_total: 790000, owe: 665000, h_share: 125000, m_profit: 75000 } },
-    { d: 'نقد، پست، تخفیف ۵۰٬۰۰۱ تقسیم مساوی', in: { discount: 50001, discount_bearer: 'split' }, exp: { mahdi_discount: 25000, helia_discount: 25001, owe: 665000, h_share: 124999, m_profit: 75000 } },
-    { d: 'اسنپ‌پی ۱٫۱۵، پست، تخفیف ۵۰٬۰۰۰ بر عهده هلیا', in: { payment_method: 'snapp', discount: 50000, discount_bearer: 'helia' }, exp: { net: 600000, customer_total: 880000, payout: 790000 } }
+    { d: '۱) نقد، پست، بدون تخفیف', in: {}, exp: { customer_total: 840000, owe: 690000, h_share: 150000 } },
+    { d: '۲) نقد، پیک، بدون تخفیف', in: { shipping_method: 'courier' }, exp: { customer_total: 650000, owe: 500000, h_share: 150000 } },
+    { d: '۳) اسنپ‌پی ۱٫۱۵، پست، بدون تخفیف', in: { payment_method: 'snapp' }, exp: { net: 650000, customer_total: 940000, payout: 840000, owe: 690000, h_share: 150000 } },
+    { d: '۴) اسنپ‌پی ۱٫۱۵، پیک، بدون تخفیف', in: { payment_method: 'snapp', shipping_method: 'courier' }, exp: { customer_total: 750000, payout: 650000, owe: 500000 } },
+    { d: '۵) اسنپ‌پی ۱٫۲، پست، بدون تخفیف', in: { payment_method: 'snapp', snapp_multiplier: 1.2 }, exp: { customer_total: 970000, payout: 840000 } },
+    { d: '۶) نقد، پست، تخفیف ۵۰٬۰۰۰ بر عهده پیج', in: { discount: 50000, discount_bearer: 'helia' }, exp: { customer_total: 790000, owe: 690000, h_share: 100000, helia_discount: 50000, mahdi_discount: 0 } },
+    { d: '۷) نقد، پست، تخفیف ۵۰٬۰۰۰ بر عهده مغازه', in: { discount: 50000, discount_bearer: 'mahdi' }, exp: { customer_total: 790000, owe: 640000, h_share: 150000, mahdi_discount: 50000, helia_discount: 0 } },
+    { d: '۸) نقد، پست، تخفیف ۵۰٬۰۰۰ تقسیم نصف‌نصف', in: { discount: 50000, discount_bearer: 'split' }, exp: { customer_total: 790000, owe: 665000, h_share: 125000, mahdi_discount: 25000, helia_discount: 25000 } },
+    { d: '۹) نقد، پست، تخفیف ۵۰٬۰۰۱ نصف‌نصف', in: { discount: 50001, discount_bearer: 'split' }, exp: { mahdi_discount: 25000, helia_discount: 25001, owe: 665000, h_share: 124999 } },
+    { d: '۱۰) اسنپ‌پی ۱٫۱۵، پست، تخفیف ۵۰٬۰۰۰ بر عهده پیج', in: { payment_method: 'snapp', discount: 50000, discount_bearer: 'helia' }, exp: { net: 600000, customer_total: 880000, payout: 790000, owe: 690000, h_share: 100000 } },
+    { d: '۱۱) بازگشتی گرد: واحد ۳۵۰٬۰۰۰، اسنپ ۱٫۱۵، پست', in: { items: [{ qty: 1, base: 200000, hp: 150000 }], payment_method: 'snapp' }, exp: { net: 350000, customer_total: 595000, payout: 540000, owe: 390000, h_share: 150000 } },
+    { d: '۱۱ب) بازگشتی گرد: واحد ۵۰٬۰۰۰، اسنپ ۱٫۱۵، پیک', in: { items: [{ qty: 1, base: 30000, hp: 20000 }], payment_method: 'snapp', shipping_method: 'courier' }, exp: { customer_total: 60000, payout: 50000, owe: 30000, h_share: 20000 } },
+    { d: '۱۳) خطا: تخفیف مغازه بیشتر از کالاهای مغازه', in: { items: [{ qty: 1, base: 100000, hp: 400000 }], discount: 150000, discount_bearer: 'mahdi' }, expectError: 'تخفیف بر عهده مغازه از مبلغ کالاهای مغازه بیشتر است' }
   ];
 
   var tbody = document.querySelector('#results tbody');
   var pass = 0, fail = 0;
 
-  function cell(txt, ok) {
-    var td = document.createElement('td');
-    td.textContent = txt;
-    td.className = ok ? 'pass' : 'fail';
-    return td;
+  function record(name, ok, detail) {
+    ok ? pass++ : fail++;
+    return { name: name, ok: ok, detail: detail || '' };
   }
 
+  var extraRows = [];
+
   CASES.forEach(function (c, i) {
-    var got, err = null;
+    var got = null, err = null;
     try { got = Calc.calcOrder(make(c.in)); } catch (e) { err = e; }
 
     var checks = [];
-    if (err) {
-      checks.push({ k: 'بدون خطا', ok: false, got: err.message });
+    if (c.expectError) {
+      checks.push({ k: 'خطا', ok: !!err && err.message === c.expectError,
+        exp: c.expectError, got: err ? err.message : '(بدون خطا)' });
+    } else if (err) {
+      checks.push({ k: 'بدون خطا', ok: false, exp: '', got: err.message });
     } else {
       Object.keys(c.exp).forEach(function (k) {
-        checks.push({ k: k, ok: got[k] === c.exp[k], got: got[k], exp: c.exp[k] });
+        checks.push({ k: k, ok: got[k] === c.exp[k], exp: c.exp[k], got: got[k] });
       });
-      checks.push({ k: 'invariant', ok: got.invariant_ok === true, got: String(got.invariant_ok) });
+      checks.push({ k: 'invariant', ok: got.invariant_ok === true, exp: true, got: got.invariant_ok });
+      if (typeof c.post === 'function') {
+        try {
+          var r = c.post(got);
+          checks.push({ k: 'post', ok: r === true, exp: true, got: String(r) });
+        } catch (e) { checks.push({ k: 'post', ok: false, exp: true, got: e.message }); }
+      }
     }
 
     var allOk = checks.every(function (x) { return x.ok; });
-    allOk ? pass++ : fail++;
+    record(c.d, allOk, allOk ? '' : checks.filter(function (x) { return !x.ok; })
+      .map(function (x) { return x.k + ' exp=' + x.exp + ' got=' + x.got; }).join(' | '));
 
     var tr = document.createElement('tr');
     var cells = [
       String(i + 1),
       c.d,
-      err ? '—' : String(got.customer_total),
-      err ? '—' : String(got.owe),
-      err ? '—' : String(got.h_share),
-      err ? '—' : String(got.m_profit),
-      err ? '—' : String(got.net),
-      err ? '—' : String(got.customer_total - got.net),
-      allOk ? '✓' : '✗'
+      (!got || err) ? '—' : String(got.customer_total),
+      (!got || err) ? '—' : String(got.owe),
+      (!got || err) ? '—' : String(got.h_share),
+      (!got || err || got.payment_method !== 'snapp') ? '—' : String(got.payout),
+      (!got || err) ? '—' : String(got.net),
+      (got && !err) ? (got.invariant_ok ? '✓' : '✗') : '—',
+      allOk ? 'PASS' : 'FAIL — ' + checks.filter(function (x) { return !x.ok; })
+        .map(function (x) { return x.k + ' exp=' + x.exp + ' got=' + x.got; }).join(' | ')
     ];
-    cells.forEach(function (t) {
+    cells.forEach(function (t, idx) {
       var td = document.createElement('td');
       td.textContent = t;
+      if (idx === cells.length - 1) td.className = allOk ? 'pass' : 'fail';
       tr.appendChild(td);
     });
-    var res = document.createElement('td');
-    res.className = allOk ? 'pass' : 'fail';
-    res.textContent = allOk ? 'PASS' : 'FAIL — ' + checks.filter(function (x) { return !x.ok; })
-      .map(function (x) { return x.k + ' exp=' + x.exp + ' got=' + x.got; }).join(' | ');
-    tr.appendChild(res);
     tbody.appendChild(tr);
+  });
+
+  /* ---- rounding helpers ------------------------------------------------ */
+  function addExtra(name, fn) {
+    var ok = false, detail = '';
+    try {
+      var r = fn();
+      if (r === true) { ok = true; } else { detail = String(r); }
+    } catch (e) { detail = e.message; }
+    record(name, ok, detail);
+    var tr = document.createElement('tr');
+    var td1 = document.createElement('td'); td1.textContent = '';
+    var td2 = document.createElement('td'); td2.textContent = name;
+    var td3 = document.createElement('td');
+    td3.textContent = ok ? 'PASS' : ('FAIL — ' + detail);
+    td3.className = ok ? 'pass' : 'fail';
+    tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+    document.querySelector('#extra tbody').appendChild(tr);
+  }
+
+  /* roundToStep behaves exactly like the spec snippet */
+  addExtra('roundToStep: مرز دقیق ۸۰٫۵ → ۸۱', function () {
+    return Calc.roundToStep(402500, 5000) === 405000 ? true : Calc.roundToStep(402500, 5000);
+  });
+  addExtra('roundToStep: بدون گرد کردن اعشار نادرست', function () {
+    return Calc.roundToStep(1234, 1) === 1234 ? true : Calc.roundToStep(1234, 1);
+  });
+  addExtra('roundToStep: قدم صفر → قدم ۱', function () {
+    return Calc.roundToStep(1234.6, 0) === 1235 ? true : Calc.roundToStep(1234.6, 0);
+  });
+  addExtra('roundToStep: مقدار غیرعدد خطا می‌دهد', function () {
+    try { Calc.roundToStep(NaN, 5000); return 'no error'; }
+    catch (e) { return e.message === 'roundToStep: مقدار عدد نیست' ? true : e.message; }
+  });
+
+  /* Regression loop (example 12): exact integer math vs Calc.roundToStep */
+  addExtra('۱۲) حلقه بازگشتی net=۱٬۰۰۰..۳٬۰۰۰٬۰۰۰', function () {
+    for (var net = 1000; net <= 3000000; net += 1000) {
+      var js = Calc.roundToStep(net * 1.15, 5000);
+      var exact = Math.floor((2 * net * 23 + 100000) / 200000) * 5000;
+      if (js !== exact) return 'net=' + net + ' js=' + js + ' exact=' + exact;
+    }
+    return true;
+  });
+
+  /* The invariant must hold for a wide sweep of random-ish inputs */
+  addExtra('ثابت: owe + h_share === net + shipping_fee (همه مثال‌ها)', function () {
+    var bad = [];
+    CASES.forEach(function (c) {
+      if (c.expectError) return;
+      try {
+        var r = Calc.calcOrder(make(c.in));
+        if (r.owe + r.h_share !== r.net + r.shipping_fee) bad.push(c.d);
+      } catch (e) { bad.push(c.d + ': ' + e.message); }
+    });
+    return bad.length === 0 ? true : bad.join(', ');
+  });
+
+  /* goods_owe never negative in the returned object */
+  addExtra('ثبت: حساب کالاهای مغازه هرگز منفی نیست', function () {
+    for (var d = 0; d <= 700000; d += 25000) {
+      var r;
+      try { r = Calc.calcOrder(make({ discount: d, discount_bearer: 'mahdi' })); }
+      catch (e) { continue; }
+      if (r.owe < r.shipping_fee) return 'discount=' + d + ' owe=' + r.owe;
+    }
+    return true;
   });
 
   var box = document.getElementById('summary');
   if (fail === 0) {
     box.className = 'box ok';
-    box.textContent = 'PASS — همه ' + pass + ' مثال و بررسی ثابت با موفقیت اجرا شدند.';
+    box.textContent = 'PASS — همه ' + pass + ' بررسی با موفقیت اجرا شدند.';
   } else {
     box.className = 'box bad';
     box.textContent = 'FAIL — ' + fail + ' مورد ناموفق از ' + (pass + fail);
