@@ -489,8 +489,23 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 }
 .product-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .product-name { font-weight: 700; font-size: 1rem; }
-.product-stock { font-size: .82rem; color: var(--muted); }
-.product-stock.low { color: var(--danger); font-weight: 700; }
+.product-pills { display: inline-flex; gap: 6px; align-items: center; margin-top: 4px; }
+.product.dim { opacity: .55; }
+.product.dim .price-box.hero { background: var(--surface-2); border-color: var(--border); }
+.product.dim .price-box.hero .v { color: inherit; }
+.chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+.chip-filter.active {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-text);
+  font-weight: 700;
+}
+.btn.danger-outline {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.btn.danger-outline:hover { background: var(--danger-soft); border-color: var(--danger); }
 .price-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; }
 .price-box {
   background: var(--surface-2);
@@ -532,6 +547,8 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 }
 .line-item.over { border-color: var(--warn); background: var(--warn-soft); }
 .line-item.over .meta { color: var(--warn); font-weight: 700; }
+.line-item.gone { border-color: var(--danger); background: var(--danger-soft); }
+.line-item.gone .meta { color: var(--danger); font-weight: 700; }
 .line-item .grow { min-width: 0; }
 .line-item .name { font-weight: 600; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line-item .meta { font-size: .75rem; color: var(--muted); }

@@ -26,22 +26,12 @@ var Screens = (function () {
     return null;
   }
 
-  /* price info for one unit. Mahdi sees real cost/mp; Helia only knows
-     base_price (cost+mp) and hp — m_profit is never shown to her. */
+  /* price info for one unit (section 3.3). Both partners see the same
+     numbers: there is no cost and no shop profit any more. */
   function priceInfo(p) {
-    var c = App.isMahdi && App.costs[p.id] ? App.costs[p.id] : null;
-    var base = c ? (c.cost + c.mp) : Number(p.base_price) || 0;
-    return {
-      cost: c ? c.cost : 0,
-      mp: c ? c.mp : base,
-      base: base,
-      hp: Number(p.hp) || 0,
-      unit_sum: base + (Number(p.hp) || 0)
-    };
-  }
-
-  function snappPrice(unitSum) {
-    return Calc.roundToStep(unitSum * App.settings.snapp_multiplier, App.settings.rounding_step);
+    var base = Number(p.base_price) || 0;
+    var hp = Number(p.hp) || 0;
+    return { base: base, hp: hp, unit_sum: base + hp };
   }
 
   function isFocusedIn(node) {
@@ -69,8 +59,15 @@ var Screens = (function () {
   }
 
   /* ============================================================== PRODUCTS */
+  /* Sort groups: available (by name), then unavailable, then archived. */
+  function availabilityRank(p) {
+    if (p.archived) return 2;
+    return p.available === false ? 1 : 0;
+  }
+
   var products = {
     q: '',
+    filter: '',          /* '' = همه | 'unavailable' = ناموجود */
     selected: {},
 
     render: function () {
@@ -85,11 +82,13 @@ var Screens = (function () {
 
       var q = products.q.trim().toLowerCase();
       var rows = App.products.filter(function (p) {
-        if (!q) return true;
-        return String(p.name).toLowerCase().indexOf(q) !== -1;
+        if (q && String(p.name).toLowerCase().indexOf(q) === -1) return false;
+        if (products.filter === 'unavailable') return !p.archived && p.available === false;
+        return true;
       });
       rows.sort(function (a, b) {
-        if (!!a.archived !== !!b.archived) return a.archived ? 1 : -1;
+        var ra = availabilityRank(a), rb = availabilityRank(b);
+        if (ra !== rb) return ra - rb;
         return String(a.name).localeCompare(String(b.name), 'fa');
       });
 
@@ -100,6 +99,7 @@ var Screens = (function () {
       } else {
         rows.forEach(function (p) { list.appendChild(productCard(p)); });
       }
+      renderChips();
       updateBulkBar();
       var addBtn = $('#prod-add');
       if (addBtn) addBtn.hidden = !App.isMahdi;
@@ -107,6 +107,27 @@ var Screens = (function () {
       if (bulkBtn) bulkBtn.hidden = !App.isMahdi;
     }
   };
+
+  /* «همه» / «ناموجود» filter chips with their counts. */
+  function renderChips() {
+    var hostEl = $('#prod-chips');
+    if (!hostEl) return;
+    var all = App.products.length;
+    var off = App.products.filter(function (p) { return !p.archived && p.available === false; }).length;
+    hostEl.innerHTML = '';
+    [
+      { v: '', label: 'همه', n: all },
+      { v: 'unavailable', label: 'ناموجود', n: off }
+    ].forEach(function (c) {
+      hostEl.appendChild(el('button', {
+        type: 'button',
+        class: 'btn tiny chip-filter' + (products.filter === c.v ? ' active' : ''),
+        'aria-pressed': products.filter === c.v ? 'true' : 'false',
+        text: c.label + ' (' + UI.toFaDigits(c.n) + ')',
+        onclick: function () { products.filter = c.v; products.refresh(); }
+      }));
+    });
+  }
 
   function build(h) {
     h.appendChild(el('div', { class: 'view-head' },
@@ -130,12 +151,16 @@ var Screens = (function () {
         oninput: UI.debounce(function (e) { products.q = e.target.value; products.refresh(); }, 180)
       })
     ));
+    h.appendChild(el('div', { class: 'chip-row', id: 'prod-chips' }));
 
     h.appendChild(el('div', { id: 'prod-list' }));
     h.appendChild(el('div', { id: 'prod-bulkbar' }));
   }
 
   var bulkMode = false;
+  /* Keep what the user typed across re-renders (checking a box or a
+     realtime refresh rebuilds the bar). */
+  var bulkState = { mode: 'percent', value: '' };
 
   function toggleBulkMode() {
     bulkMode = !bulkMode;
@@ -153,15 +178,20 @@ var Screens = (function () {
     var bar = el('div', { class: 'bulk-bar' });
     bar.appendChild(el('div', { class: 'row wrap' },
       el('strong', { text: UI.toFaDigits(ids.length) + ' محصول انتخاب شده' }),
-      el('select', { id: 'bulk-mode', class: 'grow', 'aria-label': 'نوع تغییر' },
-        el('option', { value: 'percent', text: 'درصدی' }),
-        el('option', { value: 'fixed', text: 'مبلغ ثابت' })),
+      el('select', {
+        id: 'bulk-mode', class: 'grow', 'aria-label': 'نوع تغییر',
+        onchange: function (e) { bulkState.mode = e.target.value; }
+      },
+        el('option', { value: 'percent', text: 'درصدی', selected: bulkState.mode === 'percent' }),
+        el('option', { value: 'fixed', text: 'مبلغ ثابت', selected: bulkState.mode === 'fixed' })),
       el('input', {
         type: 'text', id: 'bulk-value', class: 'grow', inputmode: 'decimal',
-        placeholder: 'مقدار (مثلاً ۱۰ یا ۵۰۰۰−)', 'aria-label': 'مقدار تغییر'
+        value: bulkState.value,
+        placeholder: 'مقدار (مثلاً ۱۰ یا ۵۰۰۰−)', 'aria-label': 'مقدار تغییر',
+        oninput: function (e) { bulkState.value = e.target.value; }
       }),
       el('button', {
-        class: 'btn primary small', type: 'button', text: 'اعمال روی قیمت خرید',
+        class: 'btn primary small', type: 'button', text: 'اعمال روی قیمت مغازه',
         onclick: applyBulk
       }),
       el('button', {
@@ -171,44 +201,71 @@ var Screens = (function () {
     ));
     bar.appendChild(el('p', {
       class: 'hint', style: 'margin:6px 0 0',
-      text: 'درصدی: قیمت خرید × (۱ + مقدار ÷ ۱۰۰) — مبلغ ثابت: قیمت خرید + مقدار. مقادیر منفی مجازند.'
+      text: 'درصدی: قیمت مغازه × (۱ + مقدار ÷ ۱۰۰) — مبلغ ثابت: قیمت مغازه + مقدار. مقادیر منفی مجازند.'
     }));
     hostEl.appendChild(bar);
+  }
+
+  /* Same rounding as bulk_price_update: round(old * (1 + value/100)) or
+     old + value, clamped to >= 0. PostgreSQL rounds half away from zero,
+     so mirror that instead of JS Math.round's "half toward +Infinity". */
+  function pgRound(x) {
+    return x < 0 ? -Math.round(-x) : Math.round(x);
+  }
+
+  function bulkNewPrice(oldPrice, mode, value) {
+    var n = mode === 'percent' ? pgRound(oldPrice * (1 + value / 100)) : pgRound(oldPrice + value);
+    return n < 0 ? 0 : n;
   }
 
   async function applyBulk() {
     var ids = Object.keys(products.selected);
     if (!ids.length) { UI.toast('ابتدا چند محصول را انتخاب کنید', 'warn'); return; }
-    var mode = $('#bulk-mode').value;
-    var value = UI.parseFloat10($('#bulk-value').value);
+    var mode = bulkState.mode;
+    var value = UI.parseFloat10(bulkState.value);
     if (value === null) { UI.toast('مقدار تغییر را وارد کنید', 'warn'); return; }
     var label = mode === 'percent' ? (UI.toFaDigits(value) + ' درصد') : (UI.money(value));
+
+    /* preview the first three products, computed client-side */
+    var lines = [];
+    ids.slice(0, 3).forEach(function (id) {
+      var p = productById(id);
+      if (!p) return;
+      var oldPrice = Number(p.base_price) || 0;
+      lines.push('«' + p.name + '»: ' + UI.fmtMoney(oldPrice) + ' ← ' +
+                 UI.fmtMoney(bulkNewPrice(oldPrice, mode, value)));
+    });
+    if (ids.length > 3) lines.push('… و ' + UI.toFaDigits(ids.length - 3) + ' محصول دیگر');
+
     var yes = await UI.confirm(
-      'قیمت خرید ' + UI.toFaDigits(ids.length) + ' محصول با تغییر ' + label + ' به‌روز شود؟',
-      { title: 'به‌روزرسانی گروهی قیمت', okLabel: 'اعمال' });
+      'قیمت از مغازه ' + UI.toFaDigits(ids.length) + ' محصول با تغییر ' + label + ' به‌روز شود؟',
+      { title: 'به‌روزرسانی گروهی قیمت', okLabel: 'اعمال', detail: lines.join('\n') });
     if (!yes) return;
     try {
-      var n = await DB.bulkCostUpdate(ids, mode, value);
+      var n = await DB.bulkPriceUpdate(ids, mode, value);
       UI.toast('قیمت ' + UI.toFaDigits(n || 0) + ' محصول به‌روز شد', 'ok');
       products.selected = {};
       bulkMode = false;
+      bulkState = { mode: 'percent', value: '' };
       products.refresh();
     } catch (e) { showErr(e); }
   }
 
   function productCard(p) {
     var pi = priceInfo(p);
-    var low = !p.archived && p.stock <= 2;
-    var card = el('div', { class: 'card product' });
+    var up = Calc.unitPrices(pi.base, pi.hp, App.settings);
+    var unavailable = p.available === false;
+    var card = el('div', { class: 'card product' + (unavailable && !p.archived ? ' dim' : '') });
 
     var head = el('div', { class: 'product-head' },
       el('div', {},
-        el('div', { class: 'product-name', text: p.name + (p.archived ? ' ' : '') }),
-        p.archived ? el('span', { class: 'pill muted archived-tag', text: 'بایگانی‌شده' }) : null,
-        el('div', {
-          class: 'product-stock' + (low ? ' low' : ''),
-          text: 'موجودی: ' + UI.toFaDigits(p.stock) + (low ? ' — موجودی کم!' : '')
-        })
+        el('div', { class: 'product-name', text: p.name }),
+        el('span', { class: 'product-pills' },
+          p.archived
+            ? el('span', { class: 'pill muted archived-tag', text: 'بایگانی‌شده' })
+            : (unavailable
+                ? el('span', { class: 'pill danger', text: 'ناموجود' })
+                : el('span', { class: 'pill brand', text: 'موجود' })))
       )
     );
 
@@ -227,72 +284,60 @@ var Screens = (function () {
     }
     card.appendChild(head);
 
-    var prices = el('div', { class: 'price-grid' },
+    card.appendChild(el('div', { class: 'price-grid' },
       el('div', { class: 'price-box hero' },
         el('span', { class: 'k', text: 'قیمت نقدی' }),
-        el('span', { class: 'v', text: UI.fmtMoney(pi.unit_sum) })),
+        el('span', { class: 'v', text: UI.fmtMoney(up.unit_sum) })),
       el('div', { class: 'price-box' },
         el('span', { class: 'k', text: 'قیمت اسنپ‌پی' }),
-        el('span', { class: 'v', text: UI.fmtMoney(snappPrice(pi.unit_sum)) })),
-      App.isMahdi
-        ? el('div', { class: 'price-box' },
-            el('span', { class: 'k', text: 'قیمت خرید (مهدی)' }),
-            el('span', { class: 'v', text: UI.fmtMoney(pi.cost) }))
-        : el('div', { class: 'price-box' },
-            el('span', { class: 'k', text: 'قیمت از مهدی' }),
-            el('span', { class: 'v', text: UI.fmtMoney(pi.base) })),
-      App.isMahdi
-        ? el('div', { class: 'price-box' },
-            el('span', { class: 'k', text: 'سود مهدی' }),
-            el('span', { class: 'v', text: UI.fmtMoney(pi.mp) }))
-        : null,
+        el('span', { class: 'v', text: UI.fmtMoney(up.snapp_price) })),
       el('div', { class: 'price-box' },
-        el('span', { class: 'k', text: 'سود هلیا' }),
+        el('span', { class: 'k', text: 'قیمت از مغازه' }),
+        el('span', { class: 'v', text: UI.fmtMoney(pi.base) })),
+      el('div', { class: 'price-box' },
+        el('span', { class: 'k', text: 'سود پیج' }),
         el('span', { class: 'v', text: UI.fmtMoney(pi.hp) }))
-    );
-    card.appendChild(prices);
+    ));
 
     var saveBtn = el('button', { class: 'btn primary small', type: 'button', text: 'ذخیره' });
     var edit = el('div', { class: 'edit-grid' });
 
     if (App.isMahdi) {
       var nameIn = el('input', { type: 'text', value: p.name, 'aria-label': 'نام محصول' });
-      var stockIn = el('input', { type: 'text', inputmode: 'numeric', value: String(p.stock), 'aria-label': 'موجودی' });
-      var costIn = el('input', { type: 'text', inputmode: 'numeric', value: String(pi.cost), 'aria-label': 'قیمت خرید' });
-      var mpIn = el('input', { type: 'text', inputmode: 'numeric', value: String(pi.mp), 'aria-label': 'سود مهدی' });
+      var baseIn = el('input', {
+        type: 'text', inputmode: 'numeric', value: String(pi.base), 'aria-label': 'قیمت از مغازه'
+      });
       edit.appendChild(fieldWrap('نام', nameIn));
-      edit.appendChild(fieldWrap('موجودی', stockIn));
-      edit.appendChild(fieldWrap('قیمت خرید', costIn));
-      edit.appendChild(fieldWrap('سود مهدی', mpIn));
+      edit.appendChild(fieldWrap('قیمت از مغازه (تومان)', baseIn));
 
       saveBtn.addEventListener('click', async function () {
         var name = nameIn.value.trim();
-        var stock = UI.parseInt10(stockIn.value);
-        var cost = UI.parseInt10(costIn.value);
-        var mp = UI.parseInt10(mpIn.value);
+        var base = UI.parseInt10(baseIn.value);
         if (!name) { UI.toast('نام محصول اجباری است', 'warn'); return; }
-        if (stock === null || cost === null || mp === null) {
-          UI.toast('موجودی و قیمت‌ها باید عدد صحیح باشند', 'warn'); return;
+        if (base === null || base < 0) {
+          UI.toast('قیمت از مغازه باید عدد صحیح غیرمنفی باشد', 'warn'); return;
         }
         await UI.withBusy(saveBtn, async function () {
           try {
             var changes = [];
-            if (name !== p.name || stock !== p.stock) {
-              changes.push(DB.updateProduct({ id: p.id, name: name, stock: stock, archived: p.archived }));
+            if (name !== p.name) {
+              changes.push(DB.updateProduct({ id: p.id, name: name, archived: p.archived }));
             }
-            if (cost !== pi.cost || mp !== pi.mp) changes.push(DB.setCost(p.id, cost, mp));
-            await Promise.all(changes);
+            if (base !== pi.base) changes.push(DB.setBasePrice(p.id, base));
+            if (changes.length) await Promise.all(changes);
             UI.toast('ذخیره شد', 'ok', 1600);
             Screens.products.refresh();
           } catch (e) { showErr(e); throw e; }
         });
       });
     } else {
-      var hpIn = el('input', { type: 'text', inputmode: 'numeric', value: String(pi.hp), 'aria-label': 'سود هلیا' });
-      edit.appendChild(fieldWrap('سود هلیا (هر واحد)', hpIn));
+      var hpIn = el('input', {
+        type: 'text', inputmode: 'numeric', value: String(pi.hp), 'aria-label': 'سود پیج'
+      });
+      edit.appendChild(fieldWrap('سود پیج (هر واحد)', hpIn));
       saveBtn.addEventListener('click', async function () {
         var hp = UI.parseInt10(hpIn.value);
-        if (hp === null) { UI.toast('سود باید عدد صحیح باشد', 'warn'); return; }
+        if (hp === null || hp < 0) { UI.toast('سود باید عدد صحیح غیرمنفی باشد', 'warn'); return; }
         await UI.withBusy(saveBtn, async function () {
           try {
             await DB.setHp(p.id, hp);
@@ -305,6 +350,12 @@ var Screens = (function () {
 
     var actions = el('div', { class: 'row wrap', style: 'margin-top:10px' }, saveBtn);
     if (App.isMahdi) {
+      /* one tap toggles; confirming is only needed when hiding a product */
+      actions.appendChild(el('button', {
+        class: 'btn small' + (unavailable ? '' : ' danger-outline'), type: 'button',
+        text: unavailable ? 'موجود شد' : 'عدم موجودی',
+        onclick: function () { toggleAvailability(p); }
+      }));
       actions.appendChild(el('button', {
         class: 'btn small', type: 'button',
         text: p.archived ? 'بازگردانی از بایگانی' : 'بایگانی',
@@ -316,7 +367,7 @@ var Screens = (function () {
             if (!yes) return;
           }
           try {
-            await DB.updateProduct({ id: p.id, name: p.name, stock: p.stock, archived: !wasArchived });
+            await DB.updateProduct({ id: p.id, name: p.name, archived: !wasArchived });
             UI.toast(wasArchived ? 'بازگردانده شد' : 'بایگانی شد', 'ok', 1600);
             Screens.products.refresh();
           } catch (e) { showErr(e); }
@@ -329,24 +380,36 @@ var Screens = (function () {
     return card;
   }
 
+  async function toggleAvailability(p) {
+    var unavailable = p.available === false;
+    if (!unavailable) {
+      var yes = await UI.confirm('این محصول ناموجود شود؟ در سفارش جدید قابل انتخاب نخواهد بود.',
+        { title: 'عدم موجودی', okLabel: 'ناموجود شود', danger: true });
+      if (!yes) return;
+    }
+    try {
+      await DB.setAvailability(p.id, unavailable);
+      UI.toast(unavailable ? 'موجود شد' : 'ناموجود شد', 'ok', 1600);
+      Screens.products.refresh();
+    } catch (e) { showErr(e); }
+  }
+
   function fieldWrap(label, input) {
     return el('div', { class: 'field' }, el('label', { text: label }), input);
   }
 
   async function addProductDialog() {
     var name = el('input', { type: 'text', placeholder: 'مثلاً کرم مرطوب‌کننده' });
-    var stock = el('input', { type: 'text', inputmode: 'numeric', placeholder: '۰' });
-    var cost = el('input', { type: 'text', inputmode: 'numeric', placeholder: '۴۰۰۰۰۰' });
-    var mp = el('input', { type: 'text', inputmode: 'numeric', placeholder: '۱۰۰۰۰۰' });
+    var base = el('input', { type: 'text', inputmode: 'numeric', placeholder: '۵۰۰۰۰۰' });
     var hp = el('input', { type: 'text', inputmode: 'numeric', placeholder: '۱۵۰۰۰۰' });
+    var available = el('input', { type: 'checkbox', checked: true });
 
     var body = el('div', {},
       fieldWrap('نام محصول', name),
-      fieldWrap('موجودی اولیه', stock),
-      fieldWrap('قیمت خرید از بازار (تومان)', cost),
-      fieldWrap('سود مهدی (تومان)', mp),
-      fieldWrap('سود هلیا (تومان)', hp),
-      el('p', { class: 'hint', text: 'قیمت نقدی = قیمت خرید + سود مهدی + سود هلیا' })
+      fieldWrap('قیمت از مغازه', base),
+      fieldWrap('سود پیج', hp),
+      el('label', { class: 'check' }, available, el('span', { text: 'موجود است' })),
+      el('p', { class: 'hint', text: 'قیمت نقدی = قیمت از مغازه + سود پیج' })
     );
 
     var v = await UI.modal({
@@ -358,14 +421,13 @@ var Screens = (function () {
 
     var p = {
       name: name.value.trim(),
-      stock: UI.parseInt10(stock.value),
-      cost: UI.parseInt10(cost.value),
-      mp: UI.parseInt10(mp.value),
-      hp: UI.parseInt10(hp.value)
+      base_price: UI.parseInt10(base.value),
+      hp: UI.parseInt10(hp.value),
+      available: available.checked
     };
     if (!p.name) { UI.toast('نام محصول اجباری است', 'warn'); return; }
-    if (p.stock === null || p.cost === null || p.mp === null || p.hp === null) {
-      UI.toast('موجودی و همه قیمت‌ها باید عدد صحیح باشند', 'warn'); return;
+    if (p.base_price === null || p.base_price < 0 || p.hp === null || p.hp < 0) {
+      UI.toast('قیمت‌ها باید عدد صحیح غیرمنفی باشند', 'warn'); return;
     }
     try {
       await DB.addProduct(p);
@@ -461,15 +523,15 @@ var Screens = (function () {
         el('label', { for: 'no-status', text: 'وضعیت اولیه سفارش' }),
         el('select', { id: 'no-status' },
           el('option', { value: 'new', text: 'جدید (پول هنوز نرسیده)' }),
-          el('option', { value: 'paid', text: 'پرداخت شده (پول در حساب هلیا)' }))),
+          el('option', { value: 'paid', text: 'پرداخت شده (پول در حساب پیج)' }))),
       el('div', { class: 'field' },
         el('label', { for: 'no-discount', text: 'تخفیف (تومان)' }),
         el('input', { type: 'text', id: 'no-discount', inputmode: 'numeric', placeholder: '۰' })),
       el('div', { class: 'field', id: 'no-bearer-wrap', hidden: true },
         el('label', { text: 'تخفیف بر عهده' }),
         segmented('no-bearer', [
-          { value: 'helia', label: 'هلیا' },
-          { value: 'mahdi', label: 'مهدی' },
+          { value: 'helia', label: 'پیج' },
+          { value: 'mahdi', label: 'مغازه' },
           { value: 'split', label: 'نصف‌نصف' }
         ], 'helia')),
       el('div', { class: 'field' },
@@ -495,7 +557,7 @@ var Screens = (function () {
     right.appendChild(saveBtn);
     right.appendChild(el('p', {
       class: 'hint', style: 'text-align:center',
-      text: 'موجودی پس از ثبت کم می‌شود و مبلغ‌ها در سرور محاسبه می‌شوند'
+      text: 'مبلغ‌ها در سرور محاسبه و دوباره بررسی می‌شوند'
     }));
 
     grid.appendChild(left);
@@ -572,22 +634,30 @@ var Screens = (function () {
     }
     rows.forEach(function (p) {
       var pi = priceInfo(p);
+      var up = Calc.unitPrices(pi.base, pi.hp, App.settings);
+      var unavailable = p.available === false;
       var inCart = neworder.cart.some(function (c) { return c.product_id === p.id; });
       box.appendChild(el('button', {
         type: 'button', class: 'picker-item',
-        onclick: function () { addToCart(p); }
+        disabled: unavailable,
+        'aria-disabled': unavailable ? 'true' : 'false',
+        onclick: function () { if (unavailable) return; addToCart(p); }
       },
         el('span', {},
           el('span', { class: 'pi-name', text: p.name }),
           el('span', { class: 'pi-meta', style: 'display:block',
-            text: 'موجودی ' + UI.toFaDigits(p.stock) + ' · ' + UI.fmtMoney(pi.unit_sum) + ' تومان' })),
-        el('span', { class: 'pill ' + (p.stock <= 0 ? 'danger' : (p.stock <= 2 ? 'muted' : 'brand')),
-          text: inCart ? 'در سبد ✓' : (p.stock <= 0 ? 'ناموجود' : UI.toFaDigits(p.stock)) })
+            text: UI.fmtMoney(up.unit_sum) + ' تومان' })),
+        el('span', { class: 'pill ' + (unavailable ? 'danger' : (inCart ? 'brand' : 'muted')),
+          text: unavailable ? 'ناموجود' : (inCart ? 'در سبد ✓' : 'موجود') })
       ));
     });
   }
 
   function addToCart(p) {
+    if (p.available === false) {
+      UI.toast('«' + p.name + '» ناموجود است', 'warn');
+      return;
+    }
     var line = neworder.cart.filter(function (c) { return c.product_id === p.id; })[0];
     if (line) line.qty += 1;
     else neworder.cart.push({ product_id: p.id, qty: 1 });
@@ -607,7 +677,7 @@ var Screens = (function () {
       var p = productById(line.product_id);
       if (!p) return;
       var pi = priceInfo(p);
-      var over = line.qty > p.stock;
+      var gone = p.available === false;
       var qtyInput = el('input', {
         type: 'text', inputmode: 'numeric', class: 'qty-input', value: String(line.qty),
         'aria-label': 'تعداد ' + p.name,
@@ -619,13 +689,12 @@ var Screens = (function () {
           updateSummary();
         }
       });
-      hostEl.appendChild(el('div', { class: 'line-item' + (over ? ' over' : '') },
+      hostEl.appendChild(el('div', { class: 'line-item' + (gone ? ' gone' : '') },
         el('div', { class: 'grow' },
           el('div', { class: 'name', text: p.name }),
           el('div', {
             class: 'meta',
-            text: UI.fmtMoney(pi.unit_sum) + ' × هر واحد' +
-                  (over ? ' — بیشتر از موجودی (' + UI.toFaDigits(p.stock) + ')' : '')
+            text: UI.fmtMoney(pi.unit_sum) + ' × هر واحد' + (gone ? ' — ناموجود شد' : '')
           })),
         qtyInput,
         el('span', { class: 'line-total', text: UI.fmtMoney(line.qty * pi.unit_sum) }),
@@ -647,7 +716,7 @@ var Screens = (function () {
       var p = productById(line.product_id);
       if (!p) continue;
       var pi = priceInfo(p);
-      items.push({ qty: line.qty, cost: pi.cost, mp: pi.mp, hp: pi.hp, base: pi.base });
+      items.push({ qty: line.qty, base: pi.base, hp: pi.hp });
     }
     if (!items.length) return null;
     var discount = UI.parseInt10($('#no-discount') ? $('#no-discount').value : '0') || 0;
@@ -689,6 +758,22 @@ var Screens = (function () {
     var warn = $('#no-warnings');
     warn.innerHTML = '';
 
+    /* a product that became unavailable while it sits in the cart blocks
+       the save button until the line is removed */
+    var gone = neworder.cart.filter(function (line) {
+      var p = productById(line.product_id);
+      return p && p.available === false;
+    });
+    var saveBtn = $('#no-save');
+    if (saveBtn) saveBtn.disabled = gone.length > 0;
+    gone.forEach(function (line) {
+      var p = productById(line.product_id);
+      warn.appendChild(el('div', {
+        class: 'alert danger',
+        text: '«' + p.name + '» ناموجود شده است؛ تا حذف آن از سبد امکان ثبت نیست'
+      }));
+    });
+
     var r = orderCalc();
     wrap.innerHTML = '';
     if (!r) {
@@ -700,21 +785,8 @@ var Screens = (function () {
       return;
     }
 
-    /* non blocking warnings */
-    neworder.cart.forEach(function (line) {
-      var p = productById(line.product_id);
-      if (p && line.qty > p.stock) {
-        warn.appendChild(el('div', {
-          class: 'alert warn',
-          text: 'تعداد «' + p.name + '» بیشتر از موجودی است (موجودی: ' + UI.toFaDigits(p.stock) + ')'
-        }));
-      }
-    });
     if (r.negative_helia_share) {
-      warn.appendChild(el('div', { class: 'alert warn', text: 'سود هلیا منفی می‌شود؛ تخفیف را کم کنید' }));
-    }
-    if (App.isMahdi && r.negative_mahdi_profit) {
-      warn.appendChild(el('div', { class: 'alert warn', text: 'سود مهدی منفی می‌شود؛ تخفیف را کم کنید' }));
+      warn.appendChild(el('div', { class: 'alert warn', text: 'سود پیج منفی می‌شود؛ تخفیف را کم کنید' }));
     }
     if (!r.invariant_ok) {
       warn.appendChild(el('div', { class: 'alert danger', text: 'خطای محاسباتی داخلی؛ لطفاً صفحه را تازه‌سازی کنید' }));
@@ -726,10 +798,9 @@ var Screens = (function () {
       ['هزینه ارسال (' + UI.shippingLabel(r.shipping_method) + ')', UI.fmtMoney(r.shipping_fee), ''],
       [method === 'snapp' ? 'مبلغ اسنپ‌پی شامل کارمزد' : 'مبلغ قابل پرداخت مشتری',
         UI.fmtMoney(r.customer_total), 'total'],
-      ['پرداختی به مهدی', UI.fmtMoney(r.owe), ''],
-      ['سهم هلیا', UI.fmtMoney(r.h_share), '']
+      ['پرداختی به مغازه', UI.fmtMoney(r.owe), ''],
+      ['سهم پیج', UI.fmtMoney(r.h_share), '']
     ];
-    if (App.isMahdi) rows.push(['سود مهدی', UI.fmtMoney(r.m_profit), '']);
     if (method === 'snapp') rows.push(['تسویه اسنپ‌پی (نقدی‌مانند)', UI.fmtMoney(r.payout), '']);
 
     rows.forEach(function (row) {
@@ -769,6 +840,14 @@ var Screens = (function () {
     var status = method === 'cash' ? ($('#no-status') || {}).value || 'new' : null;
 
     if (!neworder.cart.length) { UI.toast('حداقل یک کالا انتخاب کنید', 'warn'); return; }
+    var goneLine = neworder.cart.filter(function (line) {
+      var p = productById(line.product_id);
+      return p && p.available === false;
+    })[0];
+    if (goneLine) {
+      UI.toast('«' + goneLine.name + '» ناموجود شده است؛ ابتدا آن را از سبد حذف کنید', 'warn');
+      return;
+    }
     if (!customer) { UI.toast('نام مشتری اجباری است', 'warn'); $('#no-customer').focus(); return; }
     if (!UI.isValidPhone(phone)) { UI.toast('شماره تماس معتبر نیست', 'warn'); $('#no-phone').focus(); return; }
     if (!address) { UI.toast('آدرس اجباری است', 'warn'); $('#no-address').focus(); return; }
@@ -978,16 +1057,12 @@ var Screens = (function () {
     });
     card.appendChild(items);
 
-    /* money */
+    /* money — both partners see the same cells (section 3.3) */
     var money = el('div', { class: 'money-grid' },
       moneyCell('مبلغ مشتری', UI.fmtMoney(o.total), 'hero'),
-      moneyCell('به مهدی', UI.fmtMoney(o.owe)),
-      moneyCell('سهم هلیا', UI.fmtMoney(o.h_share))
+      moneyCell('به مغازه', UI.fmtMoney(o.owe)),
+      moneyCell('سهم پیج', UI.fmtMoney(o.h_share))
     );
-    if (App.isMahdi) {
-      var pv = App.privates[o.id];
-      money.appendChild(moneyCell('سود مهدی', pv ? UI.fmtMoney(pv.m_profit) : '—'));
-    }
     if (o.discount > 0) {
       money.appendChild(moneyCell('تخفیف (' + UI.bearerLabel(o.discount_bearer) + ')', UI.fmtMoney(o.discount), 'warn'));
     }
@@ -1096,12 +1171,12 @@ var Screens = (function () {
   async function changeStatus(o, target) {
     if (target === 'cancelled') {
       var yes = await UI.confirm(
-        'سفارش «' + o.customer + '» لغو شود؟ موجودی کالاها برمی‌گردد و از گزارش‌ها حذف می‌شود.',
+        'سفارش «' + o.customer + '» لغو شود؟ از گزارش‌ها حذف می‌شود و قابل بازگشت نیست.',
         { title: 'لغو سفارش', okLabel: 'لغو سفارش', danger: true });
       if (!yes) return;
       try {
         await DB.cancelOrder(o.id);
-        UI.toast('سفارش لغو شد و موجودی برگشت', 'ok');
+        UI.toast('سفارش لغو شد', 'ok');
         await Promise.all([DB.loadOrders(), DB.loadProducts()]);
         repaintOrders();
         if (window.App$ && App$.refresh) App$.refresh(false);
@@ -1140,11 +1215,10 @@ var Screens = (function () {
     var header = [
       'id', 'created_at (ISO)', 'customer', 'phone', 'postal_code', 'address', 'items',
       'payment', 'shipping', 'shipping_fee', 'snapp_multiplier', 'rounding_step',
-      'discount', 'discount_bearer', 'mahdi_discount', 'helia_discount',
-      'customer_total', 'owe_to_mahdi', 'helia_share', 'snapp_payout',
+      'discount', 'discount_bearer', 'shop_discount', 'page_discount',
+      'customer_total', 'owe_to_shop', 'page_share', 'snapp_payout',
       'status', 'tracking', 'pinned', 'pin_note', 'note'
     ];
-    if (App.isMahdi) header = header.concat(['cost_total', 'mahdi_profit']);
 
     var rows = [header];
     App.orders.slice().sort(function (a, b) {
@@ -1153,19 +1227,13 @@ var Screens = (function () {
       var items = (o.items || []).map(function (it) {
         return it.name + ' ×' + it.qty;
       }).join(' | ');
-      var r = [
+      rows.push([
         o.id, o.created_at, o.customer, o.phone, o.postal_code, o.address, items,
         o.method, o.shipping_method, o.shipping_fee, o.snapp_multiplier, o.rounding_step,
-        o.discount, o.discount_bearer, o.mahdi_discount, o.helia_discount,
+        o.discount, UI.bearerLabel(o.discount_bearer), o.mahdi_discount, o.helia_discount,
         o.total, o.owe, o.h_share, o.payout,
         UI.statusLabel(o.status), o.tracking, o.pinned ? 'yes' : 'no', o.pin_note, o.note
-      ];
-      if (App.isMahdi) {
-        var pv = App.privates[o.id] || {};
-        r.push(pv.cost_total === undefined ? '' : pv.cost_total);
-        r.push(pv.m_profit === undefined ? '' : pv.m_profit);
-      }
-      rows.push(r);
+      ]);
     });
     UI.downloadCSV('delsana-orders-' + UI.toLocalInputDate(new Date()) + '.csv', rows);
     UI.toast('خروجی CSV دانلود شد', 'ok');
@@ -1197,12 +1265,12 @@ var Screens = (function () {
 
       var live = App.orders.filter(function (o) { return o.status !== 'cancelled'; });
 
-      /* bucket 1: Helia owes Mahdi (paid) */
+      /* bucket 1: the page owes the shop (money received, not transferred) */
       var owed = live.filter(function (o) { return o.status === 'paid'; });
       var owedSum = owed.reduce(function (s, o) { return s + Number(o.owe || 0); }, 0);
       body.appendChild(bucketCard({
-        title: 'بدهی هلیا به مهدی',
-        hint: 'سفارش‌هایی که پول مشتری رسیده ولی هنوز به مهدی منتقل نشده',
+        title: 'بدهی پیج به مغازه',
+        hint: 'سفارش‌هایی که پول مشتری رسیده ولی هنوز به مغازه منتقل نشده',
         kind: 'owed',
         rows: owed,
         sumLabel: 'جمع بدهی',
@@ -1219,7 +1287,7 @@ var Screens = (function () {
       var snappSum = snapp.reduce(function (s, o) { return s + Number(o.payout || 0); }, 0);
       body.appendChild(bucketCard({
         title: 'در انتظار تسویه اسنپ‌پی',
-        hint: 'پول این سفارش‌ها هنوز به حساب هلیا نرسیده است',
+        hint: 'پول این سفارش‌ها هنوز به حساب پیج نرسیده است',
         kind: 'snapp',
         rows: snapp,
         sumLabel: 'جمع در انتظار',
@@ -1410,11 +1478,8 @@ var Screens = (function () {
       }
 
       var total = rows.reduce(function (s, o) { return s + Number(o.total || 0); }, 0);
-      var heliaProfit = rows.reduce(function (s, o) { return s + Number(o.h_share || 0); }, 0);
-      var mahdiProfit = rows.reduce(function (s, o) {
-        var p = App.privates[o.id];
-        return s + (p ? Number(p.m_profit || 0) : 0);
-      }, 0);
+      var pageShare = rows.reduce(function (s, o) { return s + Number(o.h_share || 0); }, 0);
+      var oweSum = rows.reduce(function (s, o) { return s + Number(o.owe || 0); }, 0);
       var dTotal = rows.reduce(function (s, o) { return s + Number(o.discount || 0); }, 0);
       var dMahdi = rows.reduce(function (s, o) { return s + Number(o.mahdi_discount || 0); }, 0);
       var dHelia = rows.reduce(function (s, o) { return s + Number(o.helia_discount || 0); }, 0);
@@ -1441,12 +1506,12 @@ var Screens = (function () {
       var postCount = rows.filter(function (o) { return o.shipping_method === 'post'; }).length;
       var courierCount = rows.length - postCount;
 
-      /* KPI cards */
+      /* KPI cards (section 3.3 — both partners see the same four) */
       body.appendChild(el('div', { class: 'grid four', style: 'margin-bottom:12px' },
         statCard('تعداد سفارش', UI.toFaDigits(rows.length), ''),
         statCard('فروش کل', UI.fmtMoney(total) + ' تومان', 'accent'),
-        statCard('سود هلیا', UI.fmtMoney(heliaProfit) + ' تومان', 'ok'),
-        App.isMahdi ? statCard('سود مهدی', UI.fmtMoney(mahdiProfit) + ' تومان', 'accent') : null
+        statCard('سهم پیج', UI.fmtMoney(pageShare) + ' تومان', 'ok'),
+        statCard('پرداختی به مغازه', UI.fmtMoney(oweSum) + ' تومان', 'accent')
       ));
 
       /* split: cash vs snapp */
@@ -1487,8 +1552,8 @@ var Screens = (function () {
         el('table', { class: 'data' },
           el('tbody', {},
             row2('جمع کل تخفیف', UI.fmtMoney(dTotal)),
-            row2('بر عهده مهدی', UI.fmtMoney(dMahdi)),
-            row2('بر عهده هلیا', UI.fmtMoney(dHelia)),
+            row2('بر عهده مغازه', UI.fmtMoney(dMahdi)),
+            row2('بر عهده پیج', UI.fmtMoney(dHelia)),
             row2('بر عهده نصف‌نصف', UI.fmtMoney(dTotal - dMahdi - dHelia))
           ))));
 

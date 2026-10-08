@@ -66,12 +66,18 @@
     });
   }
 
+  /* Dashes users type instead of a minus: U+2212 minus sign, U+2013 en
+     dash, U+2014 em dash. Without this a price reduction typed as
+     «۵۰۰۰−» would silently become a price increase. */
+  var DASHES = /[\u2212\u2013\u2014]/g;
+
   /* Parse a user typed number: accepts Persian/Arabic digits, commas, spaces.
      Returns an integer or null when the input is not a usable number. */
   function parseInt10(s, allowNegative) {
     if (s === null || s === undefined) return null;
-    var t = toEnDigits(s).replace(/[,\s٫]/g, '').replace(/[^\d-]/g, '');
+    var t = toEnDigits(s).replace(DASHES, '-').replace(/[,\s٫]/g, '').replace(/[^\d-]/g, '');
     if (t === '' || t === '-') return null;
+    t = trailingMinus(t);
     var n = Number(t);
     if (!isFinite(n)) return null;
     n = Math.trunc(n);
@@ -81,10 +87,21 @@
 
   function parseFloat10(s) {
     if (s === null || s === undefined) return null;
-    var t = toEnDigits(s).replace(/[,\s]/g, '').replace(/[٫]/g, '.').replace(/[^\d.\-]/g, '');
+    var t = toEnDigits(s).replace(DASHES, '-').replace(/[,\s]/g, '')
+      .replace(/[٫]/g, '.').replace(/[^\d.\-]/g, '');
     if (t === '' || t === '-' || t === '.') return null;
+    t = trailingMinus(t);
     var n = Number(t);
     return isFinite(n) ? n : null;
+  }
+
+  /* «۵۰۰۰−» means minus five thousand: move a lone trailing minus to the
+     front so the value stays negative instead of being read as positive. */
+  function trailingMinus(t) {
+    if (t.length > 1 && t.charAt(t.length - 1) === '-' && t.indexOf('-') === t.length - 1) {
+      return '-' + t.slice(0, -1);
+    }
+    return t;
   }
 
   var moneyFmt = null;
@@ -206,7 +223,7 @@
     return modal({
       title: opts.title || 'تأیید عملیات',
       body: '<p style="margin:0">' + esc(msg) + '</p>' +
-            (opts.detail ? '<p class="muted" style="margin:.5em 0 0">' + esc(opts.detail) + '</p>' : ''),
+            (opts.detail ? '<p class="muted" style="margin:.5em 0 0;white-space:pre-line">' + esc(opts.detail) + '</p>' : ''),
       actions: [
         { label: opts.cancelLabel || 'انصراف', value: false },
         { label: opts.okLabel || 'تأیید', value: true, cls: opts.danger ? 'danger' : 'primary', primary: true }
@@ -312,7 +329,7 @@
   };
   var ACTION_LABEL = {
     'paid': 'دریافت پول',
-    'settled': 'تسویه با مهدی',
+    'settled': 'تسویه با مغازه',
     'shipped': 'ارسال شد',
     'delivered': 'تحویل شد',
     'cancelled': 'لغو سفارش'
@@ -333,7 +350,12 @@
     });
   }
 
-  var BEARER_LABEL = { helia: 'هلیا', mahdi: 'مهدی', split: 'نصف‌نصف' };
+  /* Display names only — the internal identities (roles `mahdi` / `helia`,
+     RPC names, keys) never change. */
+  var PARTY_LABEL = { mahdi: 'مغازه', helia: 'پیج' };
+  function partyLabel(role) { return PARTY_LABEL[role] || role; }
+
+  var BEARER_LABEL = { helia: 'پیج', mahdi: 'مغازه', split: 'نصف‌نصف' };
   function bearerLabel(b) { return BEARER_LABEL[b] || b; }
   function shippingLabel(s) { return s === 'post' ? 'پست' : 'پیک'; }
   function methodLabel(m) { return m === 'snapp' ? 'اسنپ‌پی' : 'نقدی/کارت'; }
@@ -405,7 +427,9 @@
     normalizePostal: normalizePostal, isValidPostal: isValidPostal,
     normalizePhone: normalizePhone, isValidPhone: isValidPhone,
     statusLabel: statusLabel, statusPill: statusPill, nextActions: nextActions,
-    STATUS: STATUS, STATUS_FLOW: STATUS_FLOW,
+    STATUS: STATUS, STATUS_FLOW: STATUS_FLOW, ACTION_LABEL: ACTION_LABEL,
+    PARTY_LABEL: PARTY_LABEL, partyLabel: partyLabel,
+    BEARER_LABEL: BEARER_LABEL,
     bearerLabel: bearerLabel, shippingLabel: shippingLabel, methodLabel: methodLabel,
     downloadCSV: downloadCSV, errMessage: errMessage, debounce: debounce
   };

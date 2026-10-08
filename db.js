@@ -12,9 +12,7 @@
     isMahdi: false,
     settings: { post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000 },
     products: [],
-    costs: {},        /* product_id -> {cost, mp}   (Mahdi only) */
     orders: [],
-    privates: {},     /* order_id -> {cost_total, m_profit} (Mahdi only) */
     view: 'products',
     online: true,
     channel: null,
@@ -95,7 +93,7 @@
   DB.signOut = async function () {
     try { await App.supabase.auth.signOut(); } catch (e) { /* already signed out */ }
     App.user = null; App.profile = null; App.role = null; App.isMahdi = false;
-    App.products = []; App.orders = []; App.costs = {}; App.privates = {};
+    App.products = []; App.orders = [];
   };
 
   /* Load the signed-in user's profile row (role). */
@@ -116,52 +114,62 @@
   };
 
   /* -------------------------------------------------------------- settings */
+  /* Read one numeric setting. `null`/empty/non-finite means "keep the
+     default"; 0 is a perfectly valid post_fee, so never use `x || default`.
+     snapp_multiplier and rounding_step additionally have to be > 0. */
+  function readSetting(raw, def, allowZero) {
+    if (raw === null || raw === undefined || raw === '') return def;
+    var v = Number(raw);
+    if (!isFinite(v)) return def;
+    if (allowZero ? v < 0 : v <= 0) return def;
+    return v;
+  }
+
   DB.loadSettings = async function () {
     var rows = await unwrap(App.supabase.from('settings').select('key, value'));
     var s = { post_fee: DEFAULTS.post_fee, snapp_multiplier: DEFAULTS.snapp_multiplier, rounding_step: DEFAULTS.rounding_step };
     (rows || []).forEach(function (r) {
-      if (r.key === 'post_fee') s.post_fee = Math.trunc(Number(r.value)) || DEFAULTS.post_fee;
-      else if (r.key === 'snapp_multiplier') s.snapp_multiplier = Number(r.value) || DEFAULTS.snapp_multiplier;
-      else if (r.key === 'rounding_step') s.rounding_step = Math.trunc(Number(r.value)) || DEFAULTS.rounding_step;
+      if (r.key === 'post_fee') s.post_fee = Math.trunc(readSetting(r.value, DEFAULTS.post_fee, true));
+      else if (r.key === 'snapp_multiplier') s.snapp_multiplier = readSetting(r.value, DEFAULTS.snapp_multiplier, false);
+      else if (r.key === 'rounding_step') s.rounding_step = Math.trunc(readSetting(r.value, DEFAULTS.rounding_step, false));
     });
     App.settings = s;
     return s;
   };
 
   DB.saveSettings = async function (s) {
+    /* `settings` has no INSERT policy (section 5.2), so upsert always fails.
+       The three rows are created by setup.sql; only UPDATE is ever needed. */
     var rows = [
       { key: 'post_fee', value: String(Math.trunc(Number(s.post_fee))) },
       { key: 'snapp_multiplier', value: String(Number(s.snapp_multiplier)) },
       { key: 'rounding_step', value: String(Math.trunc(Number(s.rounding_step))) }
     ];
-    await unwrap(App.supabase.from('settings').upsert(rows, { onConflict: 'key' }));
+    for (var i = 0; i < rows.length; i++) {
+      await unwrap(App.supabase.from('settings').update({ value: rows[i].value }).eq('key', rows[i].key));
+    }
     await DB.loadSettings();
     return App.settings;
   };
 
   /* -------------------------------------------------------------- products */
   DB.loadProducts = async function () {
-    var products = await fetchAll('products', 'id, name, stock, hp, base_price, archived, created_at', 'name', true);
-    App.products = products;
-    App.costs = {};
-    if (App.isMahdi) {
-      var costs = await fetchAll('product_costs', 'product_id, cost, mp');
-      (costs || []).forEach(function (c) { App.costs[c.product_id] = { cost: c.cost, mp: c.mp }; });
-    }
+    App.products = await fetchAll(
+      'products', 'id, name, base_price, hp, available, archived, created_at', 'name', true
+    );
     return App.products;
   };
 
   DB.addProduct = async function (p) {
     await DB.rpc('add_product', {
-      p_name: p.name, p_stock: p.stock, p_cost: p.cost, p_mp: p.mp, p_hp: p.hp
+      p_name: p.name, p_base_price: p.base_price, p_hp: p.hp,
+      p_available: p.available === undefined ? true : !!p.available
     });
     await DB.loadProducts();
   };
 
   DB.updateProduct = async function (p) {
-    await DB.rpc('update_product', {
-      p_id: p.id, p_name: p.name, p_stock: p.stock, p_archived: !!p.archived
-    });
+    await DB.rpc('update_product', { p_id: p.id, p_name: p.name, p_archived: !!p.archived });
     await DB.loadProducts();
   };
 
@@ -170,13 +178,18 @@
     await DB.loadProducts();
   };
 
-  DB.setCost = async function (id, cost, mp) {
-    await DB.rpc('set_cost', { p_id: id, p_cost: cost, p_mp: mp });
+  DB.setBasePrice = async function (id, price) {
+    await DB.rpc('set_base_price', { p_id: id, p_price: price });
     await DB.loadProducts();
   };
 
-  DB.bulkCostUpdate = async function (ids, mode, value) {
-    var n = await DB.rpc('bulk_cost_update', { p_ids: ids, p_mode: mode, p_value: value });
+  DB.setAvailability = async function (id, available) {
+    await DB.rpc('set_availability', { p_id: id, p_available: !!available });
+    await DB.loadProducts();
+  };
+
+  DB.bulkPriceUpdate = async function (ids, mode, value) {
+    var n = await DB.rpc('bulk_price_update', { p_ids: ids, p_mode: mode, p_value: value });
     await DB.loadProducts();
     return n;
   };
@@ -192,11 +205,6 @@
       'created_at', false
     );
     App.orders = orders;
-    App.privates = {};
-    if (App.isMahdi) {
-      var priv = await fetchAll('order_private', 'order_id, cost_total, m_profit');
-      (priv || []).forEach(function (p) { App.privates[p.order_id] = p; });
-    }
     return App.orders;
   };
 

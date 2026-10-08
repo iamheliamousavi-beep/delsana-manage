@@ -44,7 +44,19 @@
   <tbody></tbody>
 </table>
 
+<h2>۳) آزمون تبدیل اعداد ورودی (بخش ۵٫۱۴)</h2>
+<table id="parsing">
+  <thead>
+    <tr>
+      <th>#</th><th>شرح</th><th>کارکرد</th><th>ورودی</th>
+      <th>مقدار منتظره</th><th>مقدار واقعی</th><th>نتیجه</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
 <script src="calc.js"></script>
+<script src="ui.js"></script>
 <script>
 (function () {
   'use strict';
@@ -203,6 +215,85 @@
     }
     return true;
   });
+
+  /* ---------- section ۳: number parsing (5.14) ------------------------- */
+  var ptbody = document.querySelector('#parsing tbody');
+
+  function addParse(d, input, fn, expected) {
+    var got;
+    try {
+      got = fn === 'float' ? UI.parseFloat10(input) : UI.parseInt10(input, true);
+    } catch (e) { got = 'throw: ' + e.message; }
+    var ok = got === expected;
+    record(d, ok, ok ? '' : 'exp=' + expected + ' got=' + got);
+
+    var cells = [
+      String(ptbody.rows.length + 1), d,
+      fn === 'float' ? 'parseFloat10' : 'parseInt10(s, true)',
+      JSON.stringify(input), String(expected), String(got),
+      ok ? 'PASS' : 'FAIL — exp=' + expected + ' got=' + got
+    ];
+    var tr = document.createElement('tr');
+    cells.forEach(function (t, idx) {
+      var td = document.createElement('td');
+      td.textContent = t;
+      if (idx === cells.length - 1) td.className = ok ? 'pass' : 'fail';
+      tr.appendChild(td);
+    });
+    ptbody.appendChild(tr);
+  }
+
+  /* parseInt10 is always called with allowNegative=true in these tests so
+     that the trailing-dash rule (5.14) itself is what is being measured;
+     the "منفی بدون مجوز" row calls it the way the price fields do. */
+  function addParseRestricted(d, input, expected) {
+    var got;
+    try { got = UI.parseInt10(input); } catch (e) { got = 'throw: ' + e.message; }
+    var ok = got === expected;
+    record(d, ok, ok ? '' : 'exp=' + expected + ' got=' + got);
+    var cells = [String(ptbody.rows.length + 1), d, 'parseInt10(s)',
+      JSON.stringify(input), String(expected), String(got),
+      ok ? 'PASS' : 'FAIL — exp=' + expected + ' got=' + got];
+    var tr = document.createElement('tr');
+    cells.forEach(function (t, idx) {
+      var td = document.createElement('td');
+      td.textContent = t;
+      if (idx === cells.length - 1) td.className = ok ? 'pass' : 'fail';
+      tr.appendChild(td);
+    });
+    ptbody.appendChild(tr);
+  }
+
+  if (typeof UI === 'undefined' || !UI.parseInt10) {
+    record('ui.js بارگذاری شده است', false, 'UI تعریف نشده');
+    var badTr = document.createElement('tr');
+    ['—', 'ui.js بارگذاری شده است', '—', '—', '—', '—', 'FAIL'].forEach(function (t, i) {
+      var td = document.createElement('td');
+      td.textContent = t;
+      if (i === 6) td.className = 'fail';
+      badTr.appendChild(td);
+    });
+    ptbody.appendChild(badTr);
+  } else {
+    /* «۵۰۰۰−» means minus five thousand (5.14) */
+    addParse('۱۴) خط تیره انتهایی یونیکد (U+2212) → منفی', '۵۰۰۰−', 'int', -5000);
+    addParse('۱۴ب) خط تیره انتهایی ممیز (en dash)', '۵۰۰۰–', 'int', -5000);
+    addParse('۱۴پ) امتداد (em dash) در اعشار', '۱۲۰۰—', 'float', -1200);
+    addParse('۱۴ت) علامت منفی استاندارد U+2212', '−۵۰۰۰', 'int', -5000);
+    addParseRestricted('۱۴ث) منفی بدون مجوز → null', '۵۰۰۰−', null);
+    addParse('۱۴ج) جداکننده هزارگان فارسی (U+066C)', '۵٬۰۰۰', 'int', 5000);
+    addParse('۱۴چ) جداکننده هزارگان لاتین', '5,000', 'int', 5000);
+    addParse('۱۴ح) فاصله ابتدا/انتها', ' ۱۲۰۰۰ ', 'int', 12000);
+    addParse('۱۴خ) رشته خالی → null', '', 'int', null);
+    addParse('۱۴د) غیرعددی → null', 'abc', 'int', null);
+    addParse('۱۴ذ) فقط علامت منفی → null', '-', 'int', null);
+    addParse('۱۴ر) عدد منفی لاتین با مجوز', '-25', 'int', -25);
+    addParse('۱۴ز) ممیز فارسی (U+066B) → اعشار', '۱۲٫۵', 'float', 12.5);
+    addParse('۱۴ژ) ممیز لاتین', '1.15', 'float', 1.15);
+    addParse('۱۴ش) جداکننده هزارگان در اعشار', '۵٬۰۰۰', 'float', 5000);
+    addParse('۱۴ص) خط تیره انتهایی در اعشار', '۵۰۰۰−', 'float', -5000);
+    addParse('۱۴ط) فقط علامت منفی در اعشار → null', '-', 'float', null);
+  }
 
   var box = document.getElementById('summary');
   if (fail === 0) {

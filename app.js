@@ -25,7 +25,8 @@ const CONFIG = {
     reports: 'گزارش‌ها',
     settings: 'تنظیمات'
   };
-  var ROLE_LABEL = { mahdi: 'مهدی', helia: 'هلیا' };
+  /* display names only (section 4); the roles stay `mahdi` / `helia` */
+  var ROLE_LABEL = UI.PARTY_LABEL;
 
   var state = {
     ready: false,

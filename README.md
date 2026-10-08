@@ -163,34 +163,49 @@ awaiting_snapp ─────► paid       │
 
 ## 9. Assumptions (decisions taken where the spec was open)
 
-1. **Order line snapshots are split across two tables.** `orders.items` holds the Helia-safe line
-   `{product_id, name, qty, base, hp}`; `order_private.items` holds `{product_id, qty, cost, mp}` for
-   Mahdi. Storing cost/mp inside `orders.items` would leak Mahdi's cost to Helia through the API.
-2. **No `UPDATE`/`DELETE` policies on `orders`, `products`, `profiles`, `product_costs`.**
-   Every write goes through a `security definer` RPC, so validation, stock and history stay atomic.
+1. **Order lines are stored once** in `orders.items` as `{product_id, name, qty, base, hp}` — there is
+   no separate private table any more, so both partners read exactly the same numbers.
+2. **No `UPDATE`/`DELETE` policies on `orders`, `products`, `profiles`.**
+   Every write goes through a `security definer` RPC, so validation and history stay atomic.
 3. **Cancellation** is allowed only from `new`, `awaiting_snapp`, `paid`, `settled`.
    Shipped/delivered orders are terminal — pin the order to follow up instead (the error message says so).
 4. **Classic scripts, not ES modules** (`<script src>` instead of `type="module"`) so `tests.html`
    also works when opened directly from disk (`file://`), where module imports are blocked by CORS.
 5. **"Ready to ship"** (settled, not yet shipped) is shown as a third bucket on the Accounts screen
-   for Mahdi only; Helia sees the two buckets that concern her.
-6. **Bulk cost update**: percent → `round(cost · (1 + v/100))`, fixed → `round(cost + v)`;
-   negative results clamp to `0`. The SQL RPC applies the same rounding.
+   for the shop account.
+6. **Bulk price update** applies to `base_price`: percent → `round(base · (1 + v/100))`,
+   fixed → `round(base + v)`; negative results clamp to `0`. The SQL RPC applies the same rounding.
 7. **Report ranges are computed in the viewer's local timezone** (Today/7/30/custom are local dates).
-8. **CSV export** contains *all* orders (cancelled included), UTF-8 with BOM for Excel.
-   Helia's export omits `cost_total` / `mahdi_profit`.
+8. **CSV export** contains *all* orders (cancelled included), UTF-8 with BOM for Excel, and is
+   identical for both partners (no private columns).
 9. **Accounts buttons**: the debt bucket marks orders `settled` ("mark as settled"), the Snapp bucket
    marks them `paid` ("money received"). Orders can be selected individually before bulk actions.
-10. **Over-stock quantity is a warning, not a blocker** in the form; the server still refuses the order
-    and returns a Persian error if stock is insufficient.
+10. **Availability** is a blocker, not a warning: an unavailable product cannot be picked in a new
+    order, and a line that goes unavailable while it is in the cart disables the save button until
+    it is removed.
 11. **Realtime + polling**: `orders`, `products` and `settings` are subscribed over Supabase Realtime
     (600 ms debounce) with a 45-second polling fallback; the service worker never caches API calls,
     so data is always network-first.
 12. **Products are archived, never deleted**, so old orders keep valid product names.
 13. **Pinning, status changes and tracking edits are allowed for both partners** (the spec restricts
-    nothing here); only cost/profit data is role-restricted.
+    nothing here).
 14. **Users are created manually** in the Supabase dashboard and their `profiles` row is inserted by
     hand — the app never signs people up.
+
+## 9.1 Display names
+
+Internal identifiers never change, but every string a user can read uses the new display names:
+
+| Internal (never changes) | Displayed |
+|---|---|
+| role `helia` | **پیج** (page) |
+| role `mahdi` | **مغازه** (shop) |
+
+They come from `UI.PARTY_LABEL` / `UI.partyLabel(role)` in `ui.js` (re-exported as `ROLE_LABEL` in
+`app.js`), and `UI.BEARER_LABEL` for the discount bearer (`helia` → پیج, `mahdi` → مغازه,
+`split` → نصف‌نصف). CSV headers use `owe_to_shop`, `page_share`, `shop_discount`, `page_discount`.
+The words «مهدی» and «هلیا» never appear in UI text, toasts, confirmations, CSV headers or the
+manifest.
 
 ---
 
