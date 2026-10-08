@@ -479,6 +479,7 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 .pill.st-cancelled { background: var(--surface-2); color: var(--muted); }
 .pill.muted { background: var(--surface-2); color: var(--muted); }
 .pill.danger { background: var(--danger-soft); color: var(--danger); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
 .pill.brand { background: var(--brand-soft); color: var(--brand-text); }
 
 /* ------------------------------------------------------------ products --- */
@@ -552,6 +553,9 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
 .line-item .grow { min-width: 0; }
 .line-item .name { font-weight: 600; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line-item .meta { font-size: .75rem; color: var(--muted); }
+/* accounts rows: warnings + per-row actions (sections 6 and 7.2) */
+.line-item .row-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.line-item .row-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; flex: 0 0 auto; }
 .qty-input { width: 74px; text-align: center; min-height: 38px; padding: 6px; }
 .line-total { font-weight: 700; font-size: .88rem; white-space: nowrap; }
 

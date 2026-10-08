@@ -134,6 +134,11 @@ var Screens = (function () {
       el('h2', { text: 'محصولات' }),
       el('span', { class: 'spacer' }),
       el('button', {
+        class: 'btn small', type: 'button', text: 'خروجی CSV',
+        title: 'خروجی محصولات: نام، قیمت مغازه، سود پیج، موجودی',
+        onclick: exportProductsCSV
+      }),
+      el('button', {
         class: 'btn small', id: 'prod-bulk', type: 'button', text: 'به‌روزرسانی قیمت گروهی',
         hidden: !App.isMahdi,
         onclick: function () { toggleBulkMode(); }
@@ -155,6 +160,24 @@ var Screens = (function () {
 
     h.appendChild(el('div', { id: 'prod-list' }));
     h.appendChild(el('div', { id: 'prod-bulkbar' }));
+  }
+
+  /* section 7.3 — name, base price, page profit, availability */
+  function exportProductsCSV() {
+    var rows = [['name', 'base_price', 'page_profit', 'available']];
+    App.products.filter(function (p) { return !p.archived; })
+      .sort(function (a, b) { return String(a.name || '').localeCompare(String(b.name || ''), 'fa'); })
+      .forEach(function (p) {
+        rows.push([
+          p.name,
+          Number(p.base_price) || 0,
+          Number(p.hp) || 0,
+          p.available === false ? 'no' : 'yes'
+        ]);
+      });
+    if (rows.length === 1) { UI.toast('محصولی برای خروجی وجود ندارد', 'warn'); return; }
+    UI.downloadCSV('products.csv', rows);
+    UI.toast('خروجی CSV محصولات دانلود شد', 'ok');
   }
 
   var bulkMode = false;
@@ -449,6 +472,9 @@ var Screens = (function () {
 
     refresh: function () {
       if (!this.built && $('#no-lines')) this.built = true;
+      /* section 5.13: the placeholder must track the live setting */
+      var mult = $('#no-mult');
+      if (mult) mult.placeholder = String(App.settings.snapp_multiplier);
       renderLines();
       renderPicker();
       updateSummary();
@@ -900,7 +926,7 @@ var Screens = (function () {
 
   /* =============================================================== ORDERS */
   var orders = {
-    f: { q: '', status: '', pay: '', ship: '', pinned: false },
+    f: { q: '', status: '', pay: '', ship: '', pinned: false, noCode: false },
 
     render: function () {
       shell('view-orders', 'v1', buildOrders);
@@ -923,6 +949,7 @@ var Screens = (function () {
         if (f.pay && o.method !== f.pay) return false;
         if (f.ship && o.shipping_method !== f.ship) return false;
         if (f.pinned && !o.pinned) return false;
+        if (f.noCode && !awaitingTracking(o)) return false;   /* section 6 */
         if (!q) return true;
 
         var hay = [o.customer, o.phone, o.postal_code, o.tracking, o.note, o.pin_note]
@@ -942,7 +969,7 @@ var Screens = (function () {
       list.innerHTML = '';
       if (!rows.length) {
         list.appendChild(UI.emptyState('سفارشی پیدا نشد',
-          (f.q || f.status || f.pay || f.ship || f.pinned) ? 'فیلترها را پاک کنید' : 'هنوز سفارشی ثبت نشده است'));
+          (f.q || f.status || f.pay || f.ship || f.pinned || f.noCode) ? 'فیلترها را پاک کنید' : 'هنوز سفارشی ثبت نشده است'));
       } else {
         rows.forEach(function (o) { list.appendChild(orderCard(o)); });
       }
@@ -1000,14 +1027,21 @@ var Screens = (function () {
         onchange: function (e) { orders.f.pinned = e.target.checked; orders.refresh(); }
       }),
       el('span', { text: 'فقط سنجاق‌شده‌ها' })));
+    filters.appendChild(el('label', { class: 'check' },
+      el('input', {
+        type: 'checkbox',
+        'aria-label': 'فقط سفارش‌های بدون کد رهگیری',
+        onchange: function (e) { orders.f.noCode = e.target.checked; orders.refresh(); }
+      }),
+      el('span', { text: 'بدون کد رهگیری' })));
     filters.appendChild(el('div', { class: 'field' },
       el('button', {
         class: 'btn tiny block', type: 'button', text: 'پاک‌کردن فیلترها',
         onclick: function () {
-          orders.f = { q: '', status: '', pay: '', ship: '', pinned: false };
+          orders.f = { q: '', status: '', pay: '', ship: '', pinned: false, noCode: false };
           $('#ord-q').value = ''; $('#ord-status').value = ''; $('#ord-pay').value = '';
           $('#ord-ship').value = '';
-          var cb = filters.querySelector('input[type=checkbox]'); if (cb) cb.checked = false;
+          UI.qsa('input[type=checkbox]', filters).forEach(function (cb) { cb.checked = false; });
           orders.refresh();
         }
       })));
@@ -1034,9 +1068,24 @@ var Screens = (function () {
         el('div', { class: 'sub', text: UI.fmtDateTime(o.created_at) + ' · ' + UI.methodLabel(o.method) + ' · ' + UI.shippingLabel(o.shipping_method) })),
       el('div', { class: 'order-actions' },
         UI.statusPill(o.status),
+        /* section 6: shipped, still waiting for the postal code */
+        awaitingTracking(o)
+          ? el('span', {
+              class: 'pill warn',
+              text: 'منتظر کد رهگیری · ' +
+                    UI.toFaDigits(daysSince(shippedAt(o) || o.created_at)) + ' روز'
+            })
+          : null,
+        /* section 7.1: customer data only, money stays read-only */
+        el('button', {
+          class: 'btn tiny', type: 'button', text: 'ویرایش اطلاعات',
+          'aria-label': 'ویرایش اطلاعات مشتری سفارش «' + o.customer + '»',
+          onclick: function () { editOrderInfo(o); }
+        }),
         el('button', {
           class: 'btn tiny pin-btn' + (o.pinned ? ' active' : ''), type: 'button',
           title: o.pinned ? 'برداشتن سنجاق' : 'سنجاق‌زدن برای پیگیری',
+          'aria-label': o.pinned ? 'برداشتن سنجاق سفارش' : 'سنجاق‌زدن سفارش',
           text: (o.pinned ? '📌 سنجاق‌شده' : '📎 سنجاق'),
           onclick: function () { togglePin(o); }
         }))
@@ -1141,6 +1190,54 @@ var Screens = (function () {
     return card;
   }
 
+  /* section 7.1 — customer data only. Money fields are never editable. */
+  async function editOrderInfo(o) {
+    var c  = el('input', { type: 'text', value: o.customer || '' });
+    var ph = el('input', { type: 'tel', dir: 'ltr', inputmode: 'tel', value: o.phone || '' });
+    var pc = el('input', { type: 'text', dir: 'ltr', inputmode: 'numeric', maxlength: 10, value: o.postal_code || '' });
+    var ad = el('textarea', { rows: 3, value: o.address || '' });
+    var nt = el('textarea', { rows: 2, value: o.note || '' });
+
+    var body = el('div', {},
+      fieldWrap('نام مشتری', c),
+      fieldWrap('شماره تماس', ph),
+      fieldWrap('کد پستی (۱۰ رقم)', pc),
+      fieldWrap('آدرس', ad),
+      fieldWrap('یادداشت (اختیاری)', nt),
+      el('p', { class: 'hint', text: 'مبلغ‌ها و وضعیت سفارش از این‌جا قابل تغییر نیستند.' })
+    );
+
+    var v = await UI.modal({
+      title: 'ویرایش اطلاعات سفارش «' + o.customer + '»',
+      body: body,
+      actions: [{ label: 'انصراف', value: null }, { label: 'ذخیره', value: '__ok__', primary: true }]
+    });
+    if (v !== '__ok__') return;
+
+    var data = {
+      customer: c.value.trim(),
+      phone: ph.value.trim(),
+      postal_code: UI.toEnDigits(pc.value).replace(/[^0-9]/g, ''),
+      address: ad.value.trim(),
+      note: nt.value.trim() || null
+    };
+    if (!data.customer) { UI.toast('نام مشتری اجباری است', 'warn'); c.focus(); return; }
+    if (data.postal_code.length !== 10) { UI.toast('کد پستی باید دقیقاً ۱۰ رقم باشد', 'warn'); pc.focus(); return; }
+    if (!data.address) { UI.toast('آدرس اجباری است', 'warn'); ad.focus(); return; }
+    if (UI.toEnDigits(data.phone).replace(/[^0-9]/g, '').length < 10) {
+      UI.toast('شماره تماس معتبر نیست', 'warn'); ph.focus(); return;
+    }
+    if (data.note && data.note.length > 1000) { UI.toast('یادداشت خیلی بلند است', 'warn'); nt.focus(); return; }
+
+    try {
+      await DB.updateOrderInfo(o.id, data);
+      UI.toast('اطلاعات سفارش به‌روز شد', 'ok', 1600);
+      await DB.loadOrders();
+      repaintOrders();
+      if (window.App$ && App$.refresh) App$.refresh(false);
+    } catch (e) { showErr(e); }
+  }
+
   async function togglePin(o) {
     if (o.pinned) {
       try {
@@ -1184,20 +1281,27 @@ var Screens = (function () {
       return;
     }
 
-    if (target === 'shipped' && o.shipping_method === 'post') {
+    if (target === 'shipped') {
+      /* section 5.7 + 6: the code may arrive days after the parcel leaves,
+         so it is optional — but ask once when it is still missing */
       var card = document.querySelector('#ord-list .order-card[data-order-id="' + o.id + '"]');
       var trackInput = card ? card.querySelector('.track-row input') : null;
       var val = trackInput ? String(trackInput.value || '').trim() : (o.tracking || '').trim();
-      if (!val) {
-        UI.toast('برای ارسال پستی، ابتدا کد رهگیری را وارد کنید', 'warn');
-        if (trackInput) trackInput.focus();
-        return;
+      if (!val && o.shipping_method === 'post') {
+        var goOn = await UI.confirm(
+          'کد رهگیری هنوز ثبت نشده است. سفارش بدون کد ارسال شود و کد بعداً ثبت شود؟',
+          { title: 'ارسال بدون کد رهگیری', okLabel: 'ارسال بدون کد' });
+        if (!goOn) {
+          if (trackInput) trackInput.focus();
+          return;
+        }
       }
       try {
-        await DB.setStatus(o.id, target, val, null);
-        UI.toast('کد رهگیری ذخیره و سفارش ارسال شد', 'ok');
+        await DB.setStatus(o.id, target, val || null, null);
+        UI.toast(val ? 'کد رهگیری ذخیره و سفارش ارسال شد' : 'سفارش ارسال شد؛ کد رهگیری بعداً ثبت می‌شود', 'ok');
         await DB.loadOrders();
         repaintOrders();
+        if (window.App$ && App$.refresh) App$.refresh(false);
       } catch (e) { showErr(e); }
       return;
     }
@@ -1262,36 +1366,38 @@ var Screens = (function () {
       if (!body) return;
       if (isFocusedIn(body)) return;
       body.innerHTML = '';
+      pruneSel();
 
       var live = App.orders.filter(function (o) { return o.status !== 'cancelled'; });
+      var sumOf = function (rows, f) {
+        return rows.reduce(function (s, o) { return s + Number(o[f] || 0); }, 0);
+      };
 
-      /* bucket 1: the page owes the shop (money received, not transferred) */
-      var owed = live.filter(function (o) { return o.status === 'paid'; });
-      var owedSum = owed.reduce(function (s, o) { return s + Number(o.owe || 0); }, 0);
+      /* bucket 0: money has not arrived yet (section 5.9) */
+      var fresh = live.filter(function (o) { return o.status === 'new'; });
       body.appendChild(bucketCard({
-        title: 'بدهی پیج به مغازه',
-        hint: 'سفارش‌هایی که پول مشتری رسیده ولی هنوز به مغازه منتقل نشده',
-        kind: 'owed',
-        rows: owed,
-        sumLabel: 'جمع بدهی',
-        sum: owedSum,
-        accent: 'accent',
-        bulkLabel: 'ثبت همه به‌عنوان تسویه‌شده',
-        bulkTarget: 'settled',
-        rowLabel: 'تسویه شد',
-        empty: 'بدهی بازی وجود ندارد ✓'
+        title: 'پول هنوز نرسیده',
+        hint: 'سفارش‌هایی که هنوز پول مشتری به دست نرسیده است',
+        kind: 'new',
+        rows: fresh,
+        sumLabel: 'جمع مبالغ',
+        sum: sumOf(fresh, 'total'),
+        accent: 'warn',
+        bulkLabel: 'ثبت همه به‌عنوان دریافت‌شده',
+        bulkTarget: 'paid',
+        rowLabel: 'پول رسید',
+        empty: 'سفارشی در انتظار پول ندارید ✓'
       }));
 
-      /* bucket 2: Snapp Pay pending */
+      /* bucket 1: Snapp Pay pending (money lands on the page account) */
       var snapp = live.filter(function (o) { return o.status === 'awaiting_snapp'; });
-      var snappSum = snapp.reduce(function (s, o) { return s + Number(o.payout || 0); }, 0);
       body.appendChild(bucketCard({
         title: 'در انتظار تسویه اسنپ‌پی',
         hint: 'پول این سفارش‌ها هنوز به حساب پیج نرسیده است',
         kind: 'snapp',
         rows: snapp,
         sumLabel: 'جمع در انتظار',
-        sum: snappSum,
+        sum: sumOf(snapp, 'payout'),
         accent: 'warn',
         bulkLabel: 'ثبت همه به‌عنوان دریافت‌شده',
         bulkTarget: 'paid',
@@ -1299,7 +1405,23 @@ var Screens = (function () {
         empty: 'سفارش در انتظار اسنپ‌پی ندارید ✓'
       }));
 
-      /* bucket 3 (Mahdi): ready to ship */
+      /* bucket 2: the page owes the shop (money received, not transferred) */
+      var owed = live.filter(function (o) { return o.status === 'paid'; });
+      body.appendChild(bucketCard({
+        title: 'بدهی پیج به مغازه',
+        hint: 'سفارش‌هایی که پول مشتری رسیده ولی هنوز به مغازه منتقل نشده',
+        kind: 'owed',
+        rows: owed,
+        sumLabel: 'جمع بدهی',
+        sum: sumOf(owed, 'owe'),
+        accent: 'accent',
+        bulkLabel: 'ثبت همه به‌عنوان تسویه‌شده',
+        bulkTarget: 'settled',
+        rowLabel: 'تسویه شد',
+        empty: 'بدهی بازی وجود ندارد ✓'
+      }));
+
+      /* bucket 3: ready to ship (shop only) */
       if (App.isMahdi) {
         var ready = live.filter(function (o) { return o.status === 'settled'; });
         body.appendChild(bucketCard({
@@ -1308,20 +1430,77 @@ var Screens = (function () {
           kind: 'ready',
           rows: ready,
           sumLabel: 'جمع مبالغ',
-          sum: ready.reduce(function (s, o) { return s + Number(o.total || 0); }, 0),
+          sum: sumOf(ready, 'total'),
           accent: 'ok',
           bulkLabel: null,
           bulkTarget: null,
-          rowLabel: 'ارسال شد',
+          rowLabel: null,
+          rowAction: 'ship',
           empty: 'سفارشی در انتظار ارسال نیست ✓'
         }));
       }
+
+      /* bucket 4: shipped, but the code has not arrived yet (section 6) —
+         both partners see it */
+      var noCode = live.filter(awaitingTracking);
+      body.appendChild(bucketCard({
+        title: 'منتظر کد رهگیری',
+        hint: 'ارسال شده‌اند ولی کد رهگیری هنوز ثبت نشده است',
+        kind: 'nocode',
+        rows: noCode,
+        sumLabel: 'جمع مبالغ',
+        sum: sumOf(noCode, 'total'),
+        accent: 'warn',
+        bulkLabel: null,
+        bulkTarget: null,
+        rowLabel: null,
+        rowAction: 'track',
+        empty: 'همه سفارش‌ها کد رهگیری دارند ✓'
+      }));
 
       if (!body.children.length) {
         body.appendChild(UI.emptyState('چیزی برای نمایش نیست', ''));
       }
     }
   };
+
+  /* --------------------------------------------------------- accounts bits */
+  /* section 5.11: selections live outside the render, so a live refresh
+     (or switching away and back) keeps what the user ticked */
+  var accSel = {};
+
+  function selGet(kind, id) {
+    var k = kind + ':' + id;
+    return accSel[k] === undefined ? true : !!accSel[k];
+  }
+  function selSet(kind, id, v) { accSel[kind + ':' + id] = !!v; }
+  function pruneSel() {
+    var live = {};
+    App.orders.forEach(function (o) { live[o.id] = true; });
+    Object.keys(accSel).forEach(function (k) {
+      if (!live[k.slice(k.indexOf(':') + 1)]) delete accSel[k];
+    });
+  }
+
+  function daysSince(iso) {
+    var t = iso ? new Date(iso).getTime() : 0;
+    if (!t) return 0;
+    return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+  }
+
+  /* last `shipped` entry of status_history (section 6) */
+  function shippedAt(o) {
+    var h = o.status_history || [];
+    for (var i = h.length - 1; i >= 0; i--) {
+      if (h[i] && h[i].status === 'shipped') return h[i].at || null;
+    }
+    return null;
+  }
+
+  function awaitingTracking(o) {
+    return o.status === 'shipped' && o.shipping_method === 'post' &&
+           !String(o.tracking || '').trim();
+  }
 
   function bucketCard(cfg) {
     var card = el('div', { class: 'card pad-lg' });
@@ -1340,34 +1519,77 @@ var Screens = (function () {
       return card;
     }
 
-    var selectAll = el('input', { type: 'checkbox', checked: true, 'aria-label': 'انتخاب همه' });
+    /* checkboxes only matter where a bulk button exists */
+    var withSel = !!cfg.bulkLabel;
     var rowBoxes = [];
+    var selectAll = el('input', {
+      type: 'checkbox',
+      checked: cfg.rows.every(function (o) { return selGet(cfg.kind, o.id); }),
+      'aria-label': 'انتخاب همه',
+      onchange: function (e) {
+        cfg.rows.forEach(function (o) { selSet(cfg.kind, o.id, e.target.checked); });
+        rowBoxes.forEach(function (b) { b.checked = e.target.checked; });
+      }
+    });
     var listWrap = el('div', { style: 'display:flex;flex-direction:column;gap:6px' });
 
     cfg.rows.forEach(function (o) {
-      var box = el('input', { type: 'checkbox', checked: true, 'aria-label': 'انتخاب سفارش ' + o.customer });
-      rowBoxes.push(box);
-      var row = el('div', { class: 'line-item' },
+      var box = withSel ? el('input', {
+        type: 'checkbox',
+        checked: selGet(cfg.kind, o.id),
+        'aria-label': 'انتخاب سفارش ' + o.customer,
+        onchange: function (e) { selSet(cfg.kind, o.id, e.target.checked); }
+      }) : null;
+      if (box) rowBoxes.push(box);
+
+      var age = daysSince(o.created_at);
+      var money = UI.money(cfg.kind === 'snapp' ? o.payout
+        : (cfg.kind === 'owed' ? o.owe : o.total));
+      var metaText = UI.fmtDateTime(o.created_at) + ' · ' + money;
+      var pills = el('span', { class: 'row-pills' });
+
+      /* section 6 — shipped without a code yet */
+      if (cfg.kind === 'nocode') {
+        metaText += ' · ' + UI.toFaDigits(daysSince(shippedAt(o) || o.created_at)) + ' روز از ارسال';
+        pills.appendChild(el('span', { class: 'pill danger', text: 'بدون کد رهگیری' }));
+      }
+
+      /* section 7.2 — money that has been sitting too long */
+      var stale = (cfg.kind === 'snapp' && age > 14) || (cfg.kind === 'owed' && age > 7);
+      if (stale) pills.appendChild(el('span', { class: 'pill danger', text: UI.toFaDigits(age) + ' روز معطل' }));
+
+      var actions = el('span', { class: 'row-actions' });
+      if (cfg.rowAction === 'track') {
+        actions.appendChild(el('button', {
+          class: 'btn tiny primary', type: 'button', text: 'ثبت کد',
+          onclick: function () { openTrack(o); }
+        }));
+      } else if (cfg.rowLabel) {
+        actions.appendChild(el('button', {
+          class: 'btn tiny', type: 'button', text: cfg.rowLabel,
+          onclick: function () { singleAction(cfg, o); }
+        }));
+      } else {
+        actions.appendChild(el('button', {
+          class: 'btn tiny', type: 'button', text: 'ارسال',
+          onclick: function () { openShip(o); }
+        }));
+      }
+      if (stale) {
+        actions.appendChild(el('button', {
+          class: 'btn tiny', type: 'button', text: 'سنجاق',
+          'aria-label': 'سنجاق‌زدن سفارش ' + o.customer,
+          onclick: function () { togglePin(o); }
+        }));
+      }
+
+      listWrap.appendChild(el('div', { class: 'line-item' },
         box,
         el('div', { class: 'grow' },
           el('div', { class: 'name', text: o.customer }),
-          el('div', { class: 'meta', text: UI.fmtDateTime(o.created_at) + ' · ' +
-            (cfg.kind === 'snapp' ? UI.money(o.payout) : UI.money(cfg.kind === 'owed' ? o.owe : o.total)) })),
-        cfg.rowLabel
-          ? el('button', {
-              class: 'btn tiny', type: 'button', text: cfg.rowLabel,
-              onclick: function () { singleAction(cfg, o); }
-            })
-          : el('button', {
-              class: 'btn tiny', type: 'button', text: 'ارسال',
-              onclick: function () { openShip(o); }
-            })
-      );
-      listWrap.appendChild(row);
-    });
-
-    selectAll.addEventListener('change', function () {
-      rowBoxes.forEach(function (b) { b.checked = selectAll.checked; });
+          el('div', { class: 'meta', text: metaText }),
+          pills),
+        actions));
     });
 
     card.appendChild(listWrap);
@@ -1377,7 +1599,8 @@ var Screens = (function () {
         class: 'btn primary block', type: 'button', style: 'margin-top:12px',
         text: cfg.bulkLabel,
         onclick: async function () {
-          var ids = cfg.rows.filter(function (o, i) { return rowBoxes[i].checked; }).map(function (o) { return o.id; });
+          var ids = cfg.rows.filter(function (o) { return selGet(cfg.kind, o.id); })
+            .map(function (o) { return o.id; });
           if (!ids.length) { UI.toast('حداقل یک سفارش را انتخاب کنید', 'warn'); return; }
           var yes = await UI.confirm(
             UI.toFaDigits(ids.length) + ' سفارش به‌عنوان «' +
@@ -1406,12 +1629,32 @@ var Screens = (function () {
     try {
       if (cfg.kind === 'ready') {
         await openShip(o);
-      } else {
-        await DB.setStatus(o.id, cfg.bulkTarget, null, null);
-        UI.toast('ثبت شد', 'ok', 1500);
+        return;
       }
+      await DB.setStatus(o.id, cfg.bulkTarget, null, null);
+      UI.toast('ثبت شد', 'ok', 1500);
       await DB.loadOrders();
       accounts.refresh();
+      if (window.App$ && App$.refresh) App$.refresh(false);
+    } catch (e) { showErr(e); }
+  }
+
+  /* section 6 — the code may be typed days after the parcel left */
+  async function openTrack(o) {
+    var code = await UI.prompt({
+      title: 'کد رهگیری سفارش «' + o.customer + '»',
+      label: 'کد رهگیری پستی',
+      placeholder: 'مثلاً XX123456789IR',
+      value: o.tracking || ''
+    });
+    if (code === null) return;
+    var val = String(code || '').trim();
+    try {
+      await DB.setTracking(o.id, val || null);
+      UI.toast(val ? 'کد رهگیری ذخیره شد' : 'کد رهگیری پاک شد', 'ok', 1600);
+      await DB.loadOrders();
+      accounts.refresh();
+      repaintOrders();
       if (window.App$ && App$.refresh) App$.refresh(false);
     } catch (e) { showErr(e); }
   }
@@ -1420,18 +1663,27 @@ var Screens = (function () {
     var tracking = await UI.prompt({
       title: 'ارسال سفارش «' + o.customer + '»',
       label: o.shipping_method === 'post'
-        ? 'کد رهگیری پستی (اجباری)'
+        ? 'کد رهگیری پستی (اختیاری — بعداً هم قابل ثبت است)'
         : 'نام پیک یا کد رهگیری (اختیاری)',
       placeholder: o.shipping_method === 'post' ? 'مثلاً XX123456789IR' : 'مثلاً آقای رضایی',
-      required: o.shipping_method === 'post',
-      requiredMessage: 'برای پست، کد رهگیری اجباری است'
+      value: o.tracking || ''
     });
     if (tracking === null) return;
-    await DB.setStatus(o.id, 'shipped', tracking, null);
-    UI.toast('سفارش ارسال شد', 'ok');
-    await DB.loadOrders();
-    accounts.refresh();
-    if (window.App$ && App$.refresh) App$.refresh(false);
+    var val = String(tracking || '').trim();
+    if (!val && o.shipping_method === 'post') {
+      var goOn = await UI.confirm(
+        'کد رهگیری هنوز ثبت نشده است. سفارش بدون کد ارسال شود و کد بعداً ثبت شود؟',
+        { title: 'ارسال بدون کد رهگیری', okLabel: 'ارسال بدون کد' });
+      if (!goOn) return;
+    }
+    try {
+      await DB.setStatus(o.id, 'shipped', val || null, null);
+      UI.toast(val ? 'سفارش ارسال شد' : 'سفارش ارسال شد؛ کد رهگیری بعداً ثبت می‌شود', 'ok');
+      await DB.loadOrders();
+      accounts.refresh();
+      repaintOrders();
+      if (window.App$ && App$.refresh) App$.refresh(false);
+    } catch (e) { showErr(e); }
   }
 
   /* ============================================================== REPORTS */
@@ -1481,8 +1733,11 @@ var Screens = (function () {
       var pageShare = rows.reduce(function (s, o) { return s + Number(o.h_share || 0); }, 0);
       var oweSum = rows.reduce(function (s, o) { return s + Number(o.owe || 0); }, 0);
       var dTotal = rows.reduce(function (s, o) { return s + Number(o.discount || 0); }, 0);
-      var dMahdi = rows.reduce(function (s, o) { return s + Number(o.mahdi_discount || 0); }, 0);
-      var dHelia = rows.reduce(function (s, o) { return s + Number(o.helia_discount || 0); }, 0);
+      /* section 5.8: split by the bearer that was actually chosen */
+      var dBy = { helia: 0, mahdi: 0, split: 0 };
+      rows.forEach(function (o) {
+        dBy[o.discount_bearer] = (dBy[o.discount_bearer] || 0) + Number(o.discount || 0);
+      });
 
       /* top products by quantity */
       var byProduct = {};
@@ -1552,9 +1807,9 @@ var Screens = (function () {
         el('table', { class: 'data' },
           el('tbody', {},
             row2('جمع کل تخفیف', UI.fmtMoney(dTotal)),
-            row2('بر عهده مغازه', UI.fmtMoney(dMahdi)),
-            row2('بر عهده پیج', UI.fmtMoney(dHelia)),
-            row2('بر عهده نصف‌نصف', UI.fmtMoney(dTotal - dMahdi - dHelia))
+            row2('تخفیف‌های بر عهده پیج', UI.fmtMoney(dBy.helia || 0)),
+            row2('تخفیف‌های بر عهده مغازه', UI.fmtMoney(dBy.mahdi || 0)),
+            row2('تخفیف‌های نصف‌نصف', UI.fmtMoney(dBy.split || 0))
           ))));
 
       body.appendChild(el('p', {
@@ -1635,7 +1890,7 @@ var Screens = (function () {
       el('div', { class: 'field' },
         el('label', { for: 'set-mult', text: 'ضریب اسنپ‌پی' }),
         el('input', { type: 'text', id: 'set-mult', inputmode: 'decimal', dir: 'ltr' }),
-        el('p', { class: 'hint', text: 'پیش‌فرض: ۱٫۱۵ — مبلغ کالاها × این ضیب، سپس گرد می‌شود' })),
+        el('p', { class: 'hint', text: 'پیش‌فرض: ۱٫۱۵ — مبلغ کالاها × این ضریب، سپس گرد می‌شود' })),
       el('div', { class: 'field' },
         el('label', { for: 'set-step', text: 'گرد کردن مبلغ اسنپ‌پی (تومان)' }),
         el('input', { type: 'text', id: 'set-step', inputmode: 'numeric', dir: 'ltr' }),
@@ -1658,7 +1913,11 @@ var Screens = (function () {
       el('div', { class: 'card-title' }, el('h3', { text: 'در باره اپلیکیشن' })),
       el('p', { class: 'hint', style: 'margin:0',
         text: 'مدیریت دلسانا — نسخه ۱٫۰. همه مبالغ به تومان و بدون اعشار ثبت می‌شوند. ' +
-              'داده‌ها به‌صورت زنده بین دو شریک همگام می‌شوند.' })));
+              'داده‌ها به‌صورت زنده بین دو شریک همگام می‌شوند.' }),
+      /* section 7.4 */
+      el('p', { class: 'hint', style: 'margin:8px 0 0',
+        text: 'یادآوری پشتیبان‌گیری: هر هفته فهرست سفارش‌ها را با دکمه «خروجی CSV» ' +
+              'در صفحه سفارش‌ها دانلود و نگه‌داری کنید.' })));
   }
 
   function fillSettings(skipFocused) {

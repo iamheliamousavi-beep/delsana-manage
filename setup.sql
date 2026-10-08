@@ -689,13 +689,11 @@ begin
   end if;
 
   if p_status = 'shipped' then
-    if o.shipping_method = 'post' and char_length(trim(coalesce(p_tracking, ''))) = 0 then
-      raise exception 'برای ارسال پستی کد رهگیری اجباری است';
-    end if;
+    -- the code may be registered days later (section 6): no requirement here
     update public.orders
        set status = 'shipped',
            tracking = case
-             when char_length(trim(coalesce(p_tracking, ''))) > 0 then trim(p_tracking)
+             when char_length(trim(coalesce(p_tracking, ''))) > 0 then left(trim(p_tracking), 60)
              else tracking end,
            status_history = status_history || public.order_history_entry('shipped', p_note)
      where id = p_order_id;
@@ -736,7 +734,7 @@ end;
 $$;
 
 -- Bulk helper for the Accounts screen.
--- p_target = 'settled' (from paid) | 'paid' (from awaiting_snapp)
+-- p_target = 'settled' (from paid) | 'paid' (from new or awaiting_snapp)
 create or replace function public.bulk_set_status(p_order_ids uuid[], p_target text)
 returns integer
 language plpgsql
@@ -744,19 +742,19 @@ security definer
 set search_path = public
 as $$
 declare
-  v_from text;
+  v_from text[];
   v_count integer := 0;
   r record;
 begin
   if not public.is_member() then raise exception 'دسترسی غیرمجاز'; end if;
-  if p_target = 'settled' then v_from := 'paid';
-  elsif p_target = 'paid'  then v_from := 'awaiting_snapp';
+  if p_target = 'settled' then v_from := array['paid'];
+  elsif p_target = 'paid'  then v_from := array['new','awaiting_snapp'];
   else raise exception 'وضعیت مقصد نامعتبر است';
   end if;
 
   for r in
     select id from public.orders
-     where id = any(p_order_ids) and status = v_from
+     where id = any(p_order_ids) and status = any(v_from)
      order by created_at
      for update
   loop
@@ -779,10 +777,72 @@ set search_path = public
 as $$
 begin
   if not public.is_member() then raise exception 'دسترسی غیرمجاز'; end if;
+
+  if not exists (select 1 from public.orders where id = p_order_id) then
+    raise exception 'سفارش پیدا نشد';
+  end if;
+
   update public.orders
-     set tracking = left(trim(coalesce(p_tracking, '')), 60)
-   where id = p_order_id;
+     set tracking = left(trim(coalesce(p_tracking, '')), 60),
+         last_actor = auth.uid()
+   where id = p_order_id
+     and status <> 'cancelled';
+  if not found then
+    raise exception 'سفارش لغوشده است و قابل ویرایش نیست';
+  end if;
+end;
+$$;
+
+-- section 7.1 — edit customer data only; money is never editable
+create or replace function public.update_order_info(
+  p_order_id    uuid,
+  p_customer    text,
+  p_phone       text,
+  p_address     text,
+  p_postal_code text,
+  p_note        text default null
+) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  o record;
+  v_postal text;
+begin
+  if not public.is_member() then raise exception 'دسترسی غیرمجاز'; end if;
+
+  select * into o from public.orders where id = p_order_id for update;
   if not found then raise exception 'سفارش پیدا نشد'; end if;
+  if o.status = 'cancelled' then
+    raise exception 'سفارش لغوشده قابل ویرایش نیست';
+  end if;
+
+  if char_length(trim(coalesce(p_customer, ''))) = 0 then
+    raise exception 'نام مشتری اجباری است';
+  end if;
+  v_postal := regexp_replace(public.normalize_digits(coalesce(p_postal_code, '')), '[^0-9]', '', 'g');
+  if char_length(v_postal) <> 10 then
+    raise exception 'کد پستی باید دقیقاً ۱۰ رقم باشد';
+  end if;
+  if char_length(trim(coalesce(p_address, ''))) = 0 then
+    raise exception 'آدرس اجباری است';
+  end if;
+  if char_length(trim(public.normalize_digits(coalesce(p_phone, '')))) < 10 then
+    raise exception 'شماره تماس معتبر نیست';
+  end if;
+  if coalesce(p_note, '') <> '' and char_length(p_note) > 1000 then
+    raise exception 'یادداشت خیلی بلند است';
+  end if;
+
+  update public.orders
+     set customer    = trim(p_customer),
+         phone       = trim(public.normalize_digits(p_phone)),
+         address     = trim(p_address),
+         postal_code = v_postal,
+         note        = coalesce(p_note, ''),
+         last_actor  = auth.uid()
+   where id = p_order_id;
 end;
 $$;
 

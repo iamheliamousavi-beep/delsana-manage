@@ -242,6 +242,18 @@
     await DB.rpc('set_tracking', { p_order_id: id, p_tracking: tracking });
   };
 
+  /* section 7.1 — customer data only, money is never editable */
+  DB.updateOrderInfo = async function (id, data) {
+    await DB.rpc('update_order_info', {
+      p_order_id: id,
+      p_customer: data.customer,
+      p_phone: data.phone,
+      p_address: data.address || null,
+      p_postal_code: data.postal_code,
+      p_note: data.note || null
+    });
+  };
+
   DB.setPin = async function (id, pinned, note) {
     await DB.rpc('set_pin', { p_order_id: id, p_pinned: pinned, p_pin_note: note || null });
   };

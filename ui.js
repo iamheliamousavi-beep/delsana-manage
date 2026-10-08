@@ -172,6 +172,7 @@
   function modal(opts) {
     return new Promise(function (resolve) {
       var root = document.getElementById('modal-root');
+      var prevFocus = document.activeElement;   /* section 7.5 */
       root.innerHTML = '';
 
       var bodyNode;
@@ -205,7 +206,14 @@
         document.removeEventListener('keydown', keyHandler);
         back.style.opacity = '0';
         back.style.transition = 'opacity .12s';
-        setTimeout(function () { root.innerHTML = ''; }, 120);
+        setTimeout(function () {
+          root.innerHTML = '';
+          /* section 7.5: hand focus back to whatever opened the modal */
+          if (prevFocus && prevFocus !== document.body && document.contains(prevFocus) &&
+              typeof prevFocus.focus === 'function') {
+            try { prevFocus.focus(); } catch (e) { /* detached */ }
+          }
+        }, 120);
         resolve(v);
       }
       function keyHandler(e) {

@@ -141,8 +141,10 @@ awaiting_snapp ─────► paid       │
 ```
 
 - Cash orders start at `new` or `paid` (chosen when creating); Snapp orders start at `awaiting_snapp`.
-- Marking a **post** order as shipped requires a tracking code; for courier it is optional.
-- Cancelling restores stock and removes the order from reports.
+- A **post** order can be marked `shipped` **without** a tracking code; the code may arrive days
+  later and is then saved from the order card, from Accounts («ثبت کد») or from the ship dialog.
+  Orders waiting for their code are marked «منتظر کد رهگیری».
+- Cancelling removes the order from reports (shipped/delivered orders cannot be cancelled).
 
 ---
 
@@ -152,8 +154,8 @@ awaiting_snapp ─────► paid       │
 |-----|--------------|
 | **محصولات** | Live prices (cash + Snapp), search, low-stock highlight. Mahdi edits name/stock/cost/mp, adds and archives products, bulk price update (% or fixed). Helia edits only her profit. |
 | **سفارش جدید** | Product picker + quantities, customer/phone/address/10-digit postal code, shipping, payment, Snapp multiplier override, discount + bearer, live summary, over-stock warning (does not block). |
-| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters, editable tracking code, status buttons, pin + reason, badge, cancel with stock restore, CSV export. |
-| **حساب‌ها** | Helia's debt to Mahdi (`paid`), Snapp pending (`awaiting_snapp`), and (Mahdi) *Ready to ship* (`settled`); per-row and bulk "mark as …" buttons. |
+| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment, shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, pin + reason, CSV export. |
+| **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
 | **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, Helia's profit, top-5 products, cash vs Snapp, post vs courier, discounts by bearer. Mahdi's profit only on Mahdi's account. |
 | **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step`. Applies to new orders only (each order snapshots the values it used). |
 
@@ -171,15 +173,16 @@ awaiting_snapp ─────► paid       │
    Shipped/delivered orders are terminal — pin the order to follow up instead (the error message says so).
 4. **Classic scripts, not ES modules** (`<script src>` instead of `type="module"`) so `tests.html`
    also works when opened directly from disk (`file://`), where module imports are blocked by CORS.
-5. **"Ready to ship"** (settled, not yet shipped) is shown as a third bucket on the Accounts screen
-   for the shop account.
+5. **Accounts buckets**: «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی», «بدهی پیج به مغازه»,
+   «آماده ارسال» (shop only, `settled`) and «منتظر کد رهگیری`; they are plain filters over `status`.
 6. **Bulk price update** applies to `base_price`: percent → `round(base · (1 + v/100))`,
    fixed → `round(base + v)`; negative results clamp to `0`. The SQL RPC applies the same rounding.
 7. **Report ranges are computed in the viewer's local timezone** (Today/7/30/custom are local dates).
 8. **CSV export** contains *all* orders (cancelled included), UTF-8 with BOM for Excel, and is
    identical for both partners (no private columns).
-9. **Accounts buttons**: the debt bucket marks orders `settled` ("mark as settled"), the Snapp bucket
-   marks them `paid` ("money received"). Orders can be selected individually before bulk actions.
+9. **Accounts buttons**: «پول رسید» sets `paid` (from `new` or `awaiting_snapp`), «تسویه شد» sets
+   `settled` (from `paid`), «ارسال» opens the ship dialog, «ثبت کد» saves a tracking code. Orders can
+   be selected individually before a bulk action, and the selection survives a live refresh.
 10. **Availability** is a blocker, not a warning: an unavailable product cannot be picked in a new
     order, and a line that goes unavailable while it is in the cart disables the save button until
     it is removed.
