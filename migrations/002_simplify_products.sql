@@ -1,224 +1,73 @@
 -- ==========================================================================
--- Delsana Management — Supabase schema, security and RPCs
--- Paste this whole file into the Supabase SQL Editor and run it once.
+-- Migration 002 — simplify the product model (master prompt section 3)
 --
--- This file is a FRESH INSTALL and is kept equal to
--- "migrations/001_security.sql + migrations/002_simplify_products.sql
---  applied to a brand new database".
--- For an existing database follow README -> "Upgrading" instead.
+--   BEFORE running:
+--     1. Export all orders as CSV from the app.
+--     2. Run  select * from product_costs;
+--        Run  select * from order_private;
+--        and save the results — BOTH TABLES ARE DELETED below.
 --
--- Design notes:
---   * Every money value is an integer (toman). The only non-integer is the
---     Snapp multiplier (numeric), applied and then rounded.
---   * A product has only base_price (what the shop sells it for) and hp
---     (the page's profit per unit). There is no cost, no shop profit and no
---     stock: both partners see every number.
---   * orders.items stores a {product_id, name, qty, base, hp} snapshot, so
---     old orders stay readable after a price change.
---   * All writes that touch money/status go through SECURITY DEFINER RPCs
---     which re-compute everything server side from the products table.
---   * create_order / cancel_order are atomic (single function = one
---     transaction).
---   * RLS checks MEMBERSHIP (a row in public.profiles), not merely
---     `authenticated`: the anon key is public. Also turn OFF "Allow new
---     users to sign up" in the Supabase dashboard.
+--   What changes:
+--     * products gains `available`; `stock` is dropped (no stock tracking).
+--     * products.base_price keeps its current value (it already equals the
+--       old cost + mp) and becomes NOT NULL DEFAULT 0.
+--     * product_costs / order_private and the base_price sync trigger are
+--       dropped.  Cost, shop profit and order privacy no longer exist: both
+--       partners see every number.
+--     * All RPCs are recreated for the new model (section 3.2).
+--
+--   Old orders stay intact: orders.items already stores the
+--   {product_id, name, qty, base, hp} snapshot each line was sold at.
+--
+-- IDEMPOTENT — safe to run more than once.
 -- ==========================================================================
 
-create extension if not exists pgcrypto;
+-- --------------------------------------------------------------------------
+-- 1) availability flag
+-- --------------------------------------------------------------------------
+alter table public.products
+  add column if not exists available boolean not null default true;
 
 -- --------------------------------------------------------------------------
--- helpers
+-- 2) base_price: keep the value, enforce NOT NULL DEFAULT 0
 -- --------------------------------------------------------------------------
-
--- Persian (۰-۹) and Arabic-Indic (٠-٩) digits -> ASCII digits
-create or replace function public.normalize_digits(t text)
-returns text
-language sql
-immutable
-parallel safe
-as $$
-  select translate(coalesce(t, ''),
-    '۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩',
-    '01234567890123456789');
-$$;
-
--- round half away from zero, to the given step (JS: Math.round(x/step)*step)
-create or replace function public.round_to_step(x numeric, step bigint)
-returns bigint
-language sql
-immutable
-parallel safe
-as $$
-  select case
-    when step is null or step <= 0 then round(x)::bigint
-    else (round(x / step) * step)::bigint
-  end;
-$$;
+update public.products set base_price = 0 where base_price is null;
+alter table public.products alter column base_price set default 0;
+alter table public.products alter column base_price set not null;
 
 -- --------------------------------------------------------------------------
--- profiles and role checks
+-- 3) last_actor — required by create_order (section 3.2).  Migration 003 adds
+--    the notification columns and repeats this clause with `if not exists`.
 -- --------------------------------------------------------------------------
-
-create table if not exists public.profiles (
-  user_id    uuid primary key references auth.users(id) on delete cascade,
-  role       text not null check (role in ('mahdi', 'helia')),
-  created_at timestamptz not null default now()
-);
-
-alter table public.profiles enable row level security;
-
-create or replace function public.is_mahdi()
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select exists (
-    select 1 from public.profiles where user_id = auth.uid() and role = 'mahdi'
-  );
-$$;
-
-create or replace function public.my_role()
-returns text
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select role from public.profiles where user_id = auth.uid();
-$$;
-
--- Does the current user belong to this installation at all?
--- Every read policy and most RPCs are based on this one predicate.
-create or replace function public.is_member()
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select exists (select 1 from public.profiles where user_id = auth.uid());
-$$;
-
--- No UPDATE/DELETE policy on purpose: the role can never be changed by a
--- client. Rows are inserted by the dashboard / SQL editor (owner bypasses RLS).
-drop policy if exists profiles_select on public.profiles;
-create policy profiles_select on public.profiles
-  for select to authenticated
-  using (user_id = auth.uid() or public.is_mahdi());
+alter table public.orders
+  add column if not exists last_actor uuid;
 
 -- --------------------------------------------------------------------------
--- products (readable by both partners, written only through RPCs)
+-- 4) drop the base_price sync trigger fed by product_costs
 -- --------------------------------------------------------------------------
-
-create table if not exists public.products (
-  id         uuid primary key default gen_random_uuid(),
-  name       text not null check (char_length(trim(name)) > 0),
-  base_price bigint not null default 0 check (base_price >= 0),
-  hp         bigint not null default 0 check (hp >= 0),
-  available  boolean not null default true,
-  archived   boolean not null default false,
-  created_at timestamptz not null default now()
-);
-
-alter table public.products enable row level security;
-
-drop policy if exists products_select on public.products;
-create policy products_select on public.products
-  for select to authenticated
-  using (public.is_member());
--- no INSERT/UPDATE/DELETE policy on purpose: writes go through RPCs.
+drop trigger if exists trg_sync_base_price on public.product_costs;
+drop function if exists public.sync_base_price();
 
 -- --------------------------------------------------------------------------
--- settings (both partners may edit; changes only affect NEW orders)
+-- 5) drop the removed tables
 -- --------------------------------------------------------------------------
-
-create table if not exists public.settings (
-  key   text primary key,
-  value text not null
-);
-
-alter table public.settings enable row level security;
-
-insert into public.settings (key, value) values
-  ('post_fee', '190000'),
-  ('snapp_multiplier', '1.15'),
-  ('rounding_step', '5000')
-on conflict (key) do nothing;
-
-drop policy if exists settings_select on public.settings;
-create policy settings_select on public.settings
-  for select to authenticated
-  using (public.is_member());
-
--- There is intentionally no INSERT policy: the client updates existing rows.
-drop policy if exists settings_update on public.settings;
-create policy settings_update on public.settings
-  for update to authenticated
-  using (public.is_member())
-  with check (public.is_member() and (
-    (key = 'snapp_multiplier' and value ~ '^[0-9]+(\.[0-9]+)?$') or
-    (key in ('post_fee', 'rounding_step') and value ~ '^[0-9]+$')));
+drop table if exists public.order_private cascade;
+drop table if exists public.product_costs cascade;
 
 -- --------------------------------------------------------------------------
--- orders (both partners read; writes only through RPCs)
+-- 6) stock column and stock-only RPCs
 -- --------------------------------------------------------------------------
+alter table public.products drop column if exists stock;
 
-create table if not exists public.orders (
-  id               uuid primary key default gen_random_uuid(),
-  created_at       timestamptz not null default now(),
-  customer         text not null default '',
-  phone            text not null default '',
-  address          text not null default '',
-  postal_code      text not null default '',
-  -- [{product_id, name, qty, base, hp}]  price snapshot of the order
-  items            jsonb not null default '[]'::jsonb,
-  method           text not null check (method in ('cash', 'snapp')),
-  shipping_method  text not null check (shipping_method in ('post', 'courier')),
-  shipping_fee     bigint not null default 0,
-  snapp_multiplier numeric not null default 1.15,
-  rounding_step    bigint not null default 5000,
-  discount         bigint not null default 0 check (discount >= 0),
-  discount_bearer  text not null default 'helia'
-                     check (discount_bearer in ('helia', 'mahdi', 'split')),
-  mahdi_discount   bigint not null default 0,
-  helia_discount   bigint not null default 0,
-  total            bigint not null default 0,   -- what the customer pays
-  owe              bigint not null default 0,   -- what the page transfers to the shop
-  h_share          bigint not null default 0,   -- what the page keeps
-  payout           bigint not null default 0,   -- what Snapp Pay will deposit
-  status           text not null default 'new'
-                     check (status in ('new', 'awaiting_snapp', 'paid',
-                                       'settled', 'shipped', 'delivered',
-                                       'cancelled')),
-  status_history   jsonb not null default '[]'::jsonb,
-  tracking         text not null default '',
-  note             text not null default '',
-  pinned           boolean not null default false,
-  pin_note         text not null default '',
-  pinned_at        timestamptz,
-  -- the partner who made the last change (used by the notification outbox)
-  last_actor       uuid
-);
-
-alter table public.orders enable row level security;
-
-drop policy if exists orders_select on public.orders;
-create policy orders_select on public.orders
-  for select to authenticated
-  using (public.is_member());
-
--- indexes required by the specification
-create index if not exists orders_created_at_idx on public.orders (created_at desc);
-create index if not exists orders_status_idx      on public.orders (status);
-create index if not exists orders_tracking_idx    on public.orders (tracking);
-create index if not exists orders_pinned_idx      on public.orders (pinned) where pinned = true;
-create index if not exists products_name_idx      on public.products (name);
+drop function if exists public.set_cost(uuid, bigint, bigint);
+drop function if exists public.bulk_cost_update(uuid[], text, numeric);
+-- old signatures, replaced below
+drop function if exists public.add_product(text, integer, bigint, bigint, bigint);
+drop function if exists public.update_product(uuid, text, integer, boolean);
 
 -- ==========================================================================
---  RPC: products — shop-only functions check is_mahdi(), everything else
---       checks is_member()
+--  RPC: products (section 3.2) — every function requires is_member()
+--        (or is_mahdi() where the specification says "shop only")
 -- ==========================================================================
 
 create or replace function public.add_product(
@@ -335,7 +184,7 @@ begin
 end;
 $$;
 
--- The page edits only her own number.
+-- Both partners may edit their own number; nothing else on the card changes.
 create or replace function public.set_hp(p_id uuid, p_hp bigint)
 returns void
 language plpgsql
@@ -370,7 +219,7 @@ end;
 $$;
 
 -- ==========================================================================
---  RPC: create_order  (server-side calculation, atomic)
+--  RPC: create_order — server-side calculation, atomic, no stock handling
 -- ==========================================================================
 
 create or replace function public.create_order(
@@ -629,86 +478,7 @@ begin
 end;
 $$;
 
--- ==========================================================================
---  RPC: status flow / cancel / tracking / pinning
--- ==========================================================================
-
-create or replace function public.order_history_entry(p_status text, p_note text)
-returns jsonb
-language plpgsql
-as $$
-begin
-  return jsonb_build_object(
-    'status', p_status,
-    'at', now(),
-    'by', auth.uid(),
-    'note', coalesce(nullif(trim(p_note), ''), null)
-  );
-end;
-$$;
-
-create or replace function public.set_order_status(
-  p_order_id uuid,
-  p_status   text,
-  p_tracking text default null,
-  p_note     text default null
-) returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  o record;
-  v_next text[];
-begin
-  if not public.is_member() then raise exception 'دسترسی غیرمجاز'; end if;
-  if p_status not in ('new','awaiting_snapp','paid','settled','shipped','delivered','cancelled') then
-    raise exception 'وضعیت نامعتبر است';
-  end if;
-
-  select * into o from public.orders where id = p_order_id for update;
-  if not found then raise exception 'سفارش پیدا نشد'; end if;
-  if o.status = p_status then raise exception 'سفارش همین وضعیت را دارد'; end if;
-
-  if p_status = 'cancelled' then
-    perform public.cancel_order(p_order_id);
-    return;
-  end if;
-
-  v_next := case o.status
-    when 'new'            then array['paid','cancelled']
-    when 'awaiting_snapp' then array['paid','cancelled']
-    when 'paid'           then array['settled','cancelled']
-    when 'settled'        then array['shipped','cancelled']
-    when 'shipped'        then array['delivered']
-    else array[]::text[]
-  end;
-
-  if not (p_status = any(v_next)) then
-    raise exception 'تغییر وضعیت از «%» به «%» مجاز نیست', o.status, p_status;
-  end if;
-
-  if p_status = 'shipped' then
-    if o.shipping_method = 'post' and char_length(trim(coalesce(p_tracking, ''))) = 0 then
-      raise exception 'برای ارسال پستی کد رهگیری اجباری است';
-    end if;
-    update public.orders
-       set status = 'shipped',
-           tracking = case
-             when char_length(trim(coalesce(p_tracking, ''))) > 0 then trim(p_tracking)
-             else tracking end,
-           status_history = status_history || public.order_history_entry('shipped', p_note)
-     where id = p_order_id;
-  else
-    update public.orders
-       set status = p_status,
-           status_history = status_history || public.order_history_entry(p_status, p_note)
-     where id = p_order_id;
-  end if;
-end;
-$$;
-
--- cancel_order: only marks the order cancelled (no stock restore)
+-- cancel_order: only marks the order cancelled (no stock restore, section 3.2)
 create or replace function public.cancel_order(p_order_id uuid)
 returns void
 language plpgsql
@@ -735,109 +505,18 @@ begin
 end;
 $$;
 
--- Bulk helper for the Accounts screen.
--- p_target = 'settled' (from paid) | 'paid' (from awaiting_snapp)
-create or replace function public.bulk_set_status(p_order_ids uuid[], p_target text)
-returns integer
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_from text;
-  v_count integer := 0;
-  r record;
-begin
-  if not public.is_member() then raise exception 'دسترسی غیرمجاز'; end if;
-  if p_target = 'settled' then v_from := 'paid';
-  elsif p_target = 'paid'  then v_from := 'awaiting_snapp';
-  else raise exception 'وضعیت مقصد نامعتبر است';
-  end if;
+-- --------------------------------------------------------------------------
+-- RLS: products are readable by members only and never written directly
+-- --------------------------------------------------------------------------
+drop policy if exists products_select on public.products;
+create policy products_select on public.products
+  for select to authenticated
+  using (public.is_member());
+-- no INSERT/UPDATE/DELETE policy on purpose: writes go through the RPCs above
 
-  for r in
-    select id from public.orders
-     where id = any(p_order_ids) and status = v_from
-     order by created_at
-     for update
-  loop
-    update public.orders
-       set status = p_target,
-           status_history = status_history || public.order_history_entry(p_target, null)
-     where id = r.id;
-    v_count := v_count + 1;
-  end loop;
-
-  return v_count;
-end;
-$$;
-
-create or replace function public.set_tracking(p_order_id uuid, p_tracking text)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if not public.is_member() then raise exception 'دسترسی غیرمجاز'; end if;
-  update public.orders
-     set tracking = left(trim(coalesce(p_tracking, '')), 60)
-   where id = p_order_id;
-  if not found then raise exception 'سفارش پیدا نشد'; end if;
-end;
-$$;
-
-create or replace function public.set_pin(
-  p_order_id uuid,
-  p_pinned   boolean,
-  p_pin_note text default null
-) returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if not public.is_member() then raise exception 'دسترسی غیرمجاز'; end if;
-  update public.orders
-     set pinned = p_pinned,
-         pin_note = case when p_pinned then left(coalesce(p_pin_note, ''), 300) else '' end,
-         pinned_at = case when p_pinned then now() else null end
-   where id = p_order_id;
-  if not found then raise exception 'سفارش پیدا نشد'; end if;
-end;
-$$;
-
--- ==========================================================================
---  Realtime
--- ==========================================================================
-
-do $$
-begin
-  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    create publication supabase_realtime;
-  end if;
-  alter publication supabase_realtime add table public.orders;
-exception when duplicate_object then null; end $$;
-
-do $$
-begin
-  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    create publication supabase_realtime;
-  end if;
-  alter publication supabase_realtime add table public.products;
-exception when duplicate_object then null; end $$;
-
-do $$
-begin
-  if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    create publication supabase_realtime;
-  end if;
-  alter publication supabase_realtime add table public.settings;
-exception when duplicate_object then null; end $$;
-
--- ==========================================================================
---  Grants: authenticated only (never anon) for every RPC
--- ==========================================================================
-
+-- --------------------------------------------------------------------------
+-- REVOKE / GRANT for the functions created by this migration
+-- --------------------------------------------------------------------------
 do $$
 declare
   f record;
@@ -861,35 +540,3 @@ begin
     execute format('grant execute on function public.%I(%s) to service_role', f.proname, f.args);
   end loop;
 end $$;
-
--- Table privileges: only authenticated users. Row Level Security decides
--- which rows (and the RPCs above decide which columns) each role touches.
--- A failure is reported, never swallowed silently (section 5.15).
-do $$
-begin
-  execute 'revoke all on all tables in schema public from anon';
-  execute 'grant usage on schema public to anon, authenticated';
-  execute 'grant select on all tables in schema public to authenticated';
-  execute 'grant update on public.settings to authenticated';
-  execute 'grant all on all tables in schema public to service_role';
-exception when others then
-  raise warning 'privilege block failed: %', sqlerrm;
-end $$;
-
--- ==========================================================================
---  Creating the two users
--- ==========================================================================
--- 1) Supabase Dashboard -> Authentication -> Users -> "Add user"
---    (email + password, "Auto confirm user" = ON). Create exactly two users.
--- 2) Then insert their profile rows (replace the UUIDs):
---
--- insert into public.profiles (user_id, role) values
---   ('<uuid of mahdi>', 'mahdi'),
---   ('<uuid of helia>', 'helia')
--- on conflict (user_id) do update set role = excluded.role;
---
--- 3) IMPORTANT: Supabase Dashboard -> Authentication -> Sign In / Providers
---    -> turn OFF "Allow new users to sign up".  The anon key is public and
---    public sign-up would otherwise expose every order.
---
--- Never give the frontend the service_role key.
