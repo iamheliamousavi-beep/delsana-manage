@@ -263,6 +263,30 @@
     return n || 0;
   };
 
+  /* --------------------------------------------------- notifications (9.5) */
+  /* JWT-protected Edge Functions, called with the signed-in user's token */
+  DB.fn = async function (name, body) {
+    var res = await App.supabase.functions.invoke(name, { body: body || {} });
+    if (res && res.error) fail(res.error);
+    return res ? res.data : res;
+  };
+
+  DB.createTelegramLink = function () {
+    return DB.rpc('create_telegram_link');
+  };
+
+  DB.notificationStatus = function () {
+    return DB.rpc('my_notification_status');
+  };
+
+  DB.disconnectTelegram = function () {
+    return DB.rpc('disconnect_telegram');
+  };
+
+  DB.sendInvoice = function (orderId) {
+    return DB.fn('send-invoice', { order_id: orderId });
+  };
+
   /* -------------------------------------------------------------- realtime */
   DB.subscribe = function (onChange) {
     if (App.channel) return App.channel;

@@ -278,6 +278,27 @@ Telegram is filtered in Iran: reading the bot and the channel needs a VPN, but E
 outside Iran and call Telegram normally. If Telegram is unreachable, orders still save — the
 `outbox` rows keep `last_error` and are retried on the next wake-up.
 
+### 10.6 Deploy the other functions and connect the accounts
+
+```bash
+supabase functions deploy telegram-webhook --no-verify-jwt   # Telegram calls this one
+supabase functions deploy send-invoice                        # JWT verification stays ON
+```
+
+Then register the webhook once (browser or curl), so Telegram forwards `/start`, `/stop` and
+`/help` to your function:
+
+```
+https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<ref>.supabase.co/functions/v1/telegram-webhook&secret_token=<TELEGRAM_WEBHOOK_SECRET>
+```
+
+**Connect an account:** open تنظیمات → «اعلان‌ها» → «اتصال تلگرام», a Telegram tab opens with a
+link, press **Start** there, and the app shows «متصل است». «قطع اتصال» stops the DMs again
+(inside Telegram `/stop` does the same). Fill `telegramBotUsername` in `app.js` first.
+
+The invoice button on every order card («فاکتور در تلگرام من») sends the full invoice to your own
+Telegram chat; without a link it asks you to connect first.
+
 ---
 
 ## 11. Troubleshooting

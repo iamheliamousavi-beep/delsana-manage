@@ -1082,6 +1082,12 @@ var Screens = (function () {
           'aria-label': 'ویرایش اطلاعات مشتری سفارش «' + o.customer + '»',
           onclick: function () { editOrderInfo(o); }
         }),
+        /* section 9.4: the full invoice into my own Telegram chat */
+        el('button', {
+          class: 'btn tiny', type: 'button', text: 'فاکتور در تلگرام من',
+          'aria-label': 'ارسال فاکتور سفارش «' + o.customer + '» به تلگرام من',
+          onclick: function () { sendInvoiceToTelegram(o, this); }
+        }),
         el('button', {
           class: 'btn tiny pin-btn' + (o.pinned ? ' active' : ''), type: 'button',
           title: o.pinned ? 'برداشتن سنجاق' : 'سنجاق‌زدن برای پیگیری',
@@ -1236,6 +1242,19 @@ var Screens = (function () {
       repaintOrders();
       if (window.App$ && App$.refresh) App$.refresh(false);
     } catch (e) { showErr(e); }
+  }
+  /* section 9.4 — the full invoice (8.3) into my own Telegram chat */
+  async function sendInvoiceToTelegram(o, btn) {
+    await UI.withBusy(btn, async function () {
+      try {
+        var res = await DB.sendInvoice(o.id);
+        if (res && res.ok === false && res.reason === 'not_connected') {
+          UI.toast('ابتدا تلگرام را در تنظیمات وصل کنید', 'warn', 4000);
+          return;
+        }
+        UI.toast('فاکتور به تلگرام شما ارسال شد', 'ok');
+      } catch (e) { showErr(e); }
+    });
   }
 
   async function togglePin(o) {
@@ -1873,6 +1892,7 @@ var Screens = (function () {
     render: function () {
       shell('view-settings', 'v1', buildSettings);
       fillSettings();
+      refreshNotify();
       this.refresh();
     },
     refresh: function () { fillSettings(true); }
@@ -1908,6 +1928,22 @@ var Screens = (function () {
             $('#set-step').value = '5000';
           }
         }))));
+
+    /* section 9.5 — notifications card (Telegram half; the phone half comes 9.5) */
+    h.appendChild(el('div', { class: 'card', id: 'notify-card' },
+      el('div', { class: 'card-title' }, el('h3', { text: 'اعلان‌ها' })),
+      el('div', { class: 'field' },
+        el('label', { text: 'تلگرام' }),
+        el('p', { class: 'hint', id: 'tg-status', text: 'در حال بررسی وضعیت تلگرام…' }),
+        el('div', { class: 'row wrap', style: 'margin-top:6px' },
+          el('button', {
+            class: 'btn primary', id: 'tg-connect', type: 'button', text: 'اتصال تلگرام',
+            onclick: connectTelegram
+          }),
+          el('button', {
+            class: 'btn', id: 'tg-disconnect', type: 'button', text: 'قطع اتصال',
+            onclick: disconnectTelegram
+          })))));
 
     h.appendChild(el('div', { class: 'card' },
       el('div', { class: 'card-title' }, el('h3', { text: 'در باره اپلیکیشن' })),
@@ -1945,6 +1981,61 @@ var Screens = (function () {
         UI.toast('تنظیمات ذخیره شد', 'ok');
         fillSettings();
       } catch (e) { showErr(e); throw e; }
+    });
+  }
+
+  /* ------------------------------------------- 9.5: Telegram in settings */
+  async function refreshNotify() {
+    var box = $('#tg-status');
+    var disconnect = $('#tg-disconnect');
+    if (!box) return;
+    try {
+      var st = await DB.notificationStatus();
+      var connected = !!(st && st.telegram_connected);
+      box.textContent = connected
+        ? 'متصل است؛ اعلان‌ها و فاکتورها به چت تلگرام شما می‌آید.'
+        : 'اتصال برقرار نیست؛ دکمه «اتصال تلگرام» را بزنید و در چت ربات دکمه Start را فشار دهید.';
+      if (disconnect) disconnect.disabled = !connected;
+    } catch (e) {
+      box.textContent = 'وضعیت تلگرام قابل بررسی نیست؛ صفحه را دوباره باز کنید.';
+    }
+  }
+
+  async function connectTelegram() {
+    var bot = typeof CONFIG !== 'undefined' ? String(CONFIG.telegramBotUsername || '') : '';
+    if (!bot || bot.indexOf('YOUR_') === 0) {
+      UI.toast('نام ربات تلگرام هنوز در app.js تنظیم نشده است', 'warn');
+      return;
+    }
+    /* open the window synchronously, otherwise the popup blocker wins */
+    var win = window.open('about:blank', '_blank');
+    await UI.withBusy($('#tg-connect'), async function () {
+      try {
+        var token = await DB.createTelegramLink();
+        var url = 'https://t.me/' + bot + '?start=' + encodeURIComponent(token);
+        if (win && !win.closed) {
+          win.location.href = url;
+          UI.toast('در تلگرام دکمه Start را بزنید تا اتصال کامل شود', 'ok', 5000);
+        } else {
+          try {
+            await navigator.clipboard.writeText(url);
+            UI.toast('لینک اتصال کپی شد؛ آن را در تلگرام باز کنید', 'ok', 5000);
+          } catch (e2) {
+            UI.toast('پنجره مرورگر مسدود شد؛ دوباره تلاش کنید', 'warn');
+          }
+        }
+        refreshNotify();
+      } catch (e) { showErr(e); }
+    });
+  }
+
+  async function disconnectTelegram() {
+    await UI.withBusy($('#tg-disconnect'), async function () {
+      try {
+        await DB.disconnectTelegram();
+        UI.toast('اتصال تلگرام قطع شد', 'ok');
+        refreshNotify();
+      } catch (e) { showErr(e); }
     });
   }
 

@@ -19,3 +19,19 @@ export function createAdminClient(): Admin {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
+
+/**
+ * Client that acts as the browser caller: it carries the caller's own access
+ * token, so `auth.getUser()` resolves who is calling a JWT-protected function
+ * (`send-invoice`, `test-notify`).
+ */
+export function createUserClient(authorization: string): Admin {
+  const url = Deno.env.get('SUPABASE_URL');
+  const key = Deno.env.get('SUPABASE_ANON_KEY');
+  if (!url || !key) throw new Error('SUPABASE_URL / SUPABASE_ANON_KEY are not set');
+  // deno-lint-ignore no-explicit-any
+  return createClient<any>(url, key, {
+    global: { headers: { Authorization: authorization } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
