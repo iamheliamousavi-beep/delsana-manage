@@ -212,7 +212,75 @@ manifest.
 
 ---
 
-## 10. Troubleshooting
+## 10. Notifications (outbox + `notify`)
+
+Every change to an order or a product is written to the `outbox` table **by the database**
+(triggers created in `migrations/003_notifications.sql`), and the `notify` Edge Function wakes up,
+claims a batch atomically (`claim_outbox`), and sends: a Telegram DM to the *other* partner, one
+message per order in the private channel (created once, **edited** when the tracking code changes
+or the order is cancelled), plus Web Push (see §9.5, phase 7).
+
+### 10.1 Apply migration 003
+
+Dashboard → **SQL Editor** → paste and run `migrations/003_notifications.sql`.
+It is idempotent (safe to re-run). A fresh install already has all of this from `setup.sql`.
+
+### 10.2 Secrets
+
+Dashboard → **Edge Functions → Secrets** (or `supabase secrets set NAME=value`):
+
+| Secret | Value |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | from @BotFather |
+| `TELEGRAM_BOT_USERNAME` | the bot name without `@` |
+| `TELEGRAM_CHANNEL_ID` | `-100…` (private channel) |
+| `TELEGRAM_WEBHOOK_SECRET` | a random string you invent |
+| `WEBHOOK_SECRET` | another random string you invent |
+| `APP_URL` | your GitHub Pages URL, **without** a trailing slash |
+
+### 10.3 Deploy `notify`
+
+```bash
+supabase functions deploy notify --no-verify-jwt
+```
+
+`--no-verify-jwt` is required: the database calls this function with a secret header
+(`x-webhook-secret`) instead of a user token, and the function answers 401 to any other caller.
+Dashboard alternative: **Edge Functions → notify → Deploy**.
+
+### 10.4 Point the database at it
+
+SQL Editor:
+
+```sql
+insert into app_private.config(key, value) values
+  ('notify_url',     'https://<ref>.supabase.co/functions/v1/notify'),
+  ('webhook_secret', '<the WEBHOOK_SECRET from 10.2>')
+on conflict (key) do update set value = excluded.value;
+```
+
+Without this the database skips the wake-up call (you still see a notice in the SQL output) and
+only the built-in cron wake-up (every 2 minutes) delivers.
+
+### 10.5 Verify the tracking-added-later flow
+
+1. As **پیج** create an order → the shop gets the invoice DM, the channel shows
+   «📦 سفارش جدید» with `⏳ هنوز ثبت نشده`.
+2. As **مغازه** mark it shipped **without** a code (confirm dialog) → the page is notified.
+   The channel message does not change (there is still no code).
+3. Save the tracking code → within seconds the channel message shows `کد رهگیری` in `<code>`
+   and the page gets «🚚 کد رهگیری سفارش …». This is an **edit** of the same message, never a
+   second one.
+4. Change the code → the message updates. Clear it → the `⏳` line returns.
+5. Cancel the order → the channel message gains «❌ این سفارش لغو شد».
+
+Telegram is filtered in Iran: reading the bot and the channel needs a VPN, but Edge Functions run
+outside Iran and call Telegram normally. If Telegram is unreachable, orders still save — the
+`outbox` rows keep `last_error` and are retried on the next wake-up.
+
+---
+
+## 11. Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
