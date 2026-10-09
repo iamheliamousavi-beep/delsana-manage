@@ -321,6 +321,29 @@ const CONFIG = {
     navigator.serviceWorker.register('sw.js').catch(function () { /* not fatal */ });
   }
 
+  /* ------------------------------------------------------------ theme/zoom */
+  /* theme: stored pref wins; with none, keep following the OS live */
+  function startTheme() {
+    UI.theme.apply(UI.theme.current());
+    try {
+      var mq = window.matchMedia('(prefers-color-scheme: dark)');
+      var onScheme = function () {
+        if (!UI.theme.stored()) UI.theme.apply(UI.theme.system());
+      };
+      if (mq.addEventListener) mq.addEventListener('change', onScheme);
+      else if (mq.addListener) mq.addListener(onScheme);
+    } catch (e) { /* not supported */ }
+  }
+
+  /* iOS Safari ignores user-scalable=no: block pinch gestures directly
+     (double-tap zoom is already covered by touch-action in the CSS) */
+  function blockPinchZoom() {
+    ['gesturestart', 'gesturechange'].forEach(function (ev) {
+      document.addEventListener(ev, function (e) { e.preventDefault(); },
+        { passive: false });
+    });
+  }
+
   /* ------------------------------------------------------------ errors */
   function bindErrors() {
     window.addEventListener('unhandledrejection', function (e) {
@@ -365,6 +388,8 @@ const CONFIG = {
     bindLogin();
     bindShell();
     bindErrors();
+    startTheme();
+    blockPinchZoom();
     DB.watchNetwork();
     registerSW();
 

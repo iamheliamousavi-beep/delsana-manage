@@ -2,12 +2,11 @@
 <html lang="fa" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>مدیریت دلسانا</title>
 <meta name="description" content="مدیریت فروش، سفارش‌ها و حساب‌های دلسانا">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#F2F1E8" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#13150F" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F2F1E8">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -20,6 +19,20 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="style.css">
+<script>
+  /* Apply a stored light/dark choice before first paint (anti-FOUC).
+     No stored pref → no data-theme → CSS follows the system. */
+  (function () {
+    try {
+      var t = localStorage.getItem('delsana-theme');
+      if (t === 'light' || t === 'dark') {
+        document.documentElement.setAttribute('data-theme', t);
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.content = t === 'dark' ? '#13150F' : '#F2F1E8';
+      }
+    } catch (e) { /* private mode */ }
+  })();
+</script>
 </head>
 <body>
 

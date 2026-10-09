@@ -423,6 +423,68 @@
     };
   }
 
+  /* --------------------------------------------------------------- theme */
+  /* Light/dark toggle (Settings screen). A stored pref wins; without one the
+     page keeps no html[data-theme] and CSS follows the system. */
+  var THEME_KEY = 'delsana-theme';
+  var THEME_COLOR = { light: '#F2F1E8', dark: '#13150F' };
+
+  function storedTheme() {
+    try {
+      var t = localStorage.getItem(THEME_KEY);
+      return (t === 'light' || t === 'dark') ? t : null;
+    } catch (e) { return null; }   /* private mode */
+  }
+
+  function systemTheme() {
+    try {
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark' : 'light';
+    } catch (e) { return 'light'; }
+  }
+
+  function currentTheme() { return storedTheme() || systemTheme(); }
+
+  /* sun/moon glyphs — inline SVG, same stroke style as the shell icons */
+  function themeIcon(sun) {
+    var open = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+    return sun
+      ? open + '<circle cx="12" cy="12" r="4"></circle>' +
+        '<path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"></path></svg>'
+      : open + '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"></path></svg>';
+  }
+
+  /* repaint the Settings button/hint if they exist (the card builds once) */
+  function paintThemeControls() {
+    var btn = document.getElementById('set-theme');
+    var hint = document.getElementById('theme-hint');
+    var t = currentTheme();
+    if (btn) {
+      /* the label shows the mode you switch TO: moon in light, sun in dark */
+      btn.innerHTML = themeIcon(t === 'dark') +
+        '<span>' + (t === 'dark' ? 'حالت روشن' : 'حالت تیره') + '</span>';
+    }
+    if (hint) {
+      hint.textContent = 'الان: ' + (t === 'dark' ? 'تیره' : 'روشن') +
+        (storedTheme() ? ' (انتخاب شما)' : ' (طبق سیستم)');
+    }
+  }
+
+  function applyTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m && THEME_COLOR[t]) m.content = THEME_COLOR[t];
+    paintThemeControls();
+  }
+
+  function setTheme(t) {
+    try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* private mode */ }
+    applyTheme(t);
+  }
+
+  function toggleTheme() { setTheme(currentTheme() === 'dark' ? 'light' : 'dark'); }
+
   root.UI = {
     esc: esc, qs: qs, qsa: qsa, el: el,
     toEnDigits: toEnDigits, toFaDigits: toFaDigits,
@@ -439,6 +501,10 @@
     PARTY_LABEL: PARTY_LABEL, partyLabel: partyLabel,
     BEARER_LABEL: BEARER_LABEL,
     bearerLabel: bearerLabel, shippingLabel: shippingLabel, methodLabel: methodLabel,
-    downloadCSV: downloadCSV, errMessage: errMessage, debounce: debounce
+    downloadCSV: downloadCSV, errMessage: errMessage, debounce: debounce,
+    theme: {
+      current: currentTheme, stored: storedTheme, system: systemTheme,
+      apply: applyTheme, set: setTheme, toggle: toggleTheme, paint: paintThemeControls
+    }
   };
 })(window);

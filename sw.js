@@ -4,7 +4,7 @@
    Version the CACHE name on every deploy that changes static files. */
 'use strict';
 
-var CACHE = 'delsana-v7';
+var CACHE = 'delsana-v8';
 var SHELL = [
   './index.html',
   './style.css',

@@ -1934,6 +1934,17 @@ var Screens = (function () {
           }
         }))));
 
+    /* ظاهر — light/dark: follows the system until the user picks (stored) */
+    h.appendChild(el('div', { class: 'card' },
+      el('div', { class: 'card-title' }, el('h3', { text: 'ظاهر' })),
+      el('p', { class: 'hint', id: 'theme-hint', text: '' }),
+      el('div', { class: 'row wrap', style: 'margin-top:6px' },
+        el('button', {
+          class: 'btn', id: 'set-theme', type: 'button',
+          onclick: function () { UI.theme.toggle(); }
+        }))));
+    UI.theme.paint();
+
     /* section 9.5 — notifications card (Telegram + phone) */
     h.appendChild(el('div', { class: 'card', id: 'notify-card' },
       el('div', { class: 'card-title' }, el('h3', { text: 'اعلان‌ها' })),

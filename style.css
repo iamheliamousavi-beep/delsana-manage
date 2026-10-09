@@ -1,11 +1,14 @@
 /* ==========================================================================
    Delsana Management — style.css
-   Mobile-first, RTL, light/dark via prefers-color-scheme.
+   Mobile-first, RTL. Theme: follows the system via prefers-color-scheme until
+   the user picks light/dark in Settings (html[data-theme] override).
    Palette: ivory ground, cream surfaces, pale sage panels,
    deep forest-green primary (#3E4F35). Class contract unchanged.
    ========================================================================== */
 
 :root {
+  color-scheme: light dark;
+
   --brand: #3E4F35;
   --brand-strong: #33432A;
   --brand-soft: #E5EBDA;
@@ -43,8 +46,12 @@
   --font: "Vazirmatn", Tahoma, "Segoe UI", sans-serif;
 }
 
+/* System dark — applies only until the user chooses a theme explicitly
+   (html[data-theme] overrides win on specificity). Also the no-JS fallback. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+
     --brand: #93AC7E;
     --brand-strong: #A9C195;
     --brand-soft: #26301F;
@@ -78,6 +85,45 @@
   }
 }
 
+/* Explicit choice from Settings — beats the media query by specificity.
+   Light needs no token block: the :root defaults above already are light. */
+:root[data-theme="light"] { color-scheme: light; }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --brand: #93AC7E;
+  --brand-strong: #A9C195;
+  --brand-soft: #26301F;
+  --brand-text: #C3D6AD;
+  --on-brand: #14170F;
+
+  --bg: #13150F;
+  --surface: #1B1E16;
+  --surface-2: #24281D;
+  --field: #23271C;
+
+  --text: #EBEDE2;
+  --muted: #A7AD9A;
+  --border: #33382A;
+  --border-strong: #6B735D;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 22px rgba(0, 0, 0, .35);
+  --shadow-lg: 0 2px 6px rgba(0, 0, 0, .45), 0 24px 60px rgba(0, 0, 0, .5);
+  --scrim: rgba(6, 8, 4, .62);
+
+  --ok: #7FBF87;
+  --ok-soft: #1B2C1D;
+  --on-ok: #10170F;
+  --danger: #E2957F;
+  --danger-soft: #331E17;
+  --on-danger: #2A1410;
+  --warn: #DDBB6A;
+  --warn-soft: #2F2716;
+  --on-warn: #241C0B;
+  --info: #93B7D1;
+  --info-soft: #1B2733;
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -90,7 +136,10 @@ html, body {
   line-height: 1.7;
   -webkit-text-size-adjust: 100%;
   overflow-x: hidden;
+  overflow-x: clip;
+  overscroll-behavior-x: none;
 }
+body { touch-action: manipulation; }
 
 [hidden] { display: none !important; }
 
