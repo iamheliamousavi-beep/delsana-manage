@@ -151,7 +151,7 @@ const CONFIG = {
         .then(function () { return screen.render(); })
         .catch(function (e) { UI.toast(UI.errMessage(e), 'err'); });
     }
-    window.scrollTo({ top: 0, behavior: 'instant' in window ? 'instant' : 'auto' });
+    window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
   /* --------------------------------------------------------------- data */

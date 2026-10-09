@@ -1441,7 +1441,7 @@ var Screens = (function () {
         bulkLabel: 'ثبت همه به‌عنوان تسویه‌شده',
         bulkTarget: 'settled',
         rowLabel: 'تسویه شد',
-        empty: 'بدهی بازی وجود ندارد ✓'
+        empty: 'بدهی بازی ندارید ✓'
       }));
 
       /* bucket 3: ready to ship (shop only) */

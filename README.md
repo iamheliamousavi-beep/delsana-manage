@@ -38,10 +38,13 @@ Plain HTML/CSS/vanilla JavaScript, no framework, no build step, no `npm`. Backen
 1. Supabase dashboard → **SQL Editor** → **New query**.
 2. Paste the whole content of `setup.sql` → **Run**.
    You should see `Success. No rows returned`.
-3. This creates: `profiles`, `products`, `product_costs`, `orders`, `order_private`, `settings`,
-   the `base_price` trigger, all RLS policies, the indexes, and every RPC
-   (`create_order`, `set_order_status`, `cancel_order`, `bulk_set_status`, `set_tracking`,
-   `set_pin`, `add_product`, `update_product`, `set_hp`, `set_cost`, `bulk_cost_update`).
+3. This creates: `profiles`, `products`, `orders`, `settings` — plus, for notifications,
+   `outbox`, `telegram_links`, `telegram_chats`, `push_subscriptions` and `app_private.config`
+   — together with all RLS policies, the indexes, the `orders`/`products` triggers, and every
+   RPC: `create_order`, `set_order_status`, `cancel_order`, `bulk_set_status`, `set_tracking`,
+   `set_pin`, `update_order_info`, `add_product`, `update_product`, `set_hp`, `set_base_price`,
+   `set_availability`, `bulk_price_update`, `is_member`/`is_mahdi`/`my_role` and the
+   notification RPCs described in section 10.
 
 ### 2.3 Create the two users
 1. Dashboard → **Authentication → Users → Add user**.
@@ -110,8 +113,9 @@ Everything is referenced with **relative paths**, so a sub-path works out of the
 
 ## 6. Verify the money rules
 
-Open `tests.html` in a browser. It runs all **10 worked examples** from the specification plus the
-invariant `owe_to_mahdi + helia_share == payout` for each one, and shows `PASS` / `FAIL`.
+Open `tests.html` in a browser. It runs every worked example from the specification (the money
+cases of section 2, the rounding regressions, the error case and the number-parsing cases of
+5.14) and shows `PASS` / `FAIL` for each one — 37 checks in total.
 
 Run it again after changing anything in `calc.js`.
 
@@ -119,7 +123,9 @@ Run it again after changing anything in `calc.js`.
 
 ## 7. How the money works (short version)
 
-Per product: `base = cost + mp`, `unit_sum = cost + mp + hp`.
+Per product: `base` (the price the shop sells it to the page) and `hp` (the page's profit per
+unit), so `unit_sum = base + hp`. Version 2 has no cost and no shop profit any more — both
+partners see exactly the same numbers.
 
 | Field | Formula |
 |-------|---------|
@@ -128,11 +134,12 @@ Per product: `base = cost + mp`, `unit_sum = cost + mp + hp`.
 | Cash total | `net + shipping_fee` |
 | Snapp total | `roundToStep(net · snapp_multiplier, rounding_step) + shipping_fee` |
 | `payout` (Snapp settles) | `net + shipping_fee` (same as a cash sale) |
-| `owe` (Helia → Mahdi) | `Σ q · base − mahdi_discount + shipping_fee` |
-| `h_share` | `Σ q · hp − helia_discount` |
-| `m_profit` | `Σ q · mp − mahdi_discount` |
+| `owe` (page → shop) | `Σ q · base − shop_discount + shipping_fee` |
+| `h_share` | `Σ q · hp − page_discount` |
 
-Discount bearer: `helia` → all on Helia, `mahdi` → all on Mahdi, `split` → `floor(D/2)` on Mahdi.
+Discount bearer: `helia` (پیج) → the page pays all of it, `mahdi` (مغازه) → the shop pays all of
+it, `split` → half each. Invariants: `owe + h_share == total` (cash) and
+`owe + h_share == payout` (Snapp).
 
 Everything is recomputed **on the server** inside `create_order`; the client numbers are never trusted.
 
@@ -156,14 +163,18 @@ awaiting_snapp ─────► paid       │
 
 | Tab | What it does |
 |-----|--------------|
-| **محصولات** | Live prices (cash + Snapp), search, low-stock highlight. Mahdi edits name/stock/cost/mp, adds and archives products, bulk price update (% or fixed). Helia edits only her profit. |
-| **سفارش جدید** | Product picker + quantities, customer/phone/address/10-digit postal code, shipping, payment, Snapp multiplier override, discount + bearer, live summary, over-stock warning (does not block). |
-| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment, shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, pin + reason, CSV export. |
+| **محصولات** | Live prices (cash + Snapp), availability pill, search, «عدم موجودی» / «موجود شد» (shop only, existing orders untouched), products are archived, never deleted, CSV export. Shop edits name, «قیمت از مغازه» and «سود پیج», adds products and runs a bulk price update (% or fixed) on the shop price. Page edits only «سود پیج». |
+| **سفارش جدید** | Product picker + quantities (an unavailable product blocks the save until it is removed), customer/phone/address/10-digit postal code, shipping, payment, Snapp multiplier override, discount + bearer, live summary. |
+| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment, shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export. |
 | **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
-| **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, Helia's profit, top-5 products, cash vs Snapp, post vs courier, discounts by bearer. Mahdi's profit only on Mahdi's account. |
-| **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step`. Applies to new orders only (each order snapshots the values it used). |
+| **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, «سهم پیج», «پرداختی به مغازه», top-5 products, cash vs Snapp, post vs courier, discounts by bearer — the same for both partners. |
+| **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications), and the backup reminder. |
 
-**Roles.** Mahdi sees cost, his profit and his profit totals. Helia sees "price from Mahdi" (`base`) and her own profit — never `product_costs` or `order_private`. This is enforced by **RLS in the database**, not only in the UI: Helia's session cannot read those tables, and all money/status writes go through `security definer` RPCs.
+**Roles.** Version 2 has no secret numbers any more: both partners see `base`, `hp`, totals,
+`owe` and `h_share`. What the database still enforces through **RLS** (not only the UI): only the
+shop changes product names, `base_price`, availability and archives; only the page changes `hp`;
+every money/status write goes through a `security definer` RPC; and a user without a `profiles`
+row cannot read anything or call any RPC.
 
 ---
 
@@ -223,6 +234,18 @@ Every change to an order or a product is written to the `outbox` table **by the 
 claims a batch atomically (`claim_outbox`), and sends: a Telegram DM to the *other* partner, one
 message per order in the private channel (created once, **edited** when the tracking code changes
 or the order is cancelled), plus Web Push (see §9.5, phase 7).
+
+### 10.0 Create the bot and the channel (once)
+
+1. In Telegram talk to **@BotFather** → send `/newbot` → pick a name and a username → copy the
+   token (`123456:ABC-…`). Treat it like a password.
+2. Create a **private** channel for the two partners and add the bot as an **administrator**
+   with the permission to post messages.
+3. Get the channel id: post any message in the channel, then open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser and read `chat.id`
+   (it looks like `-1001234567890`). Reading Telegram from Iran needs a VPN; the Edge Functions
+   run outside Iran and call Telegram without one.
+4. Continue with 10.1 (migration) → 10.2 (secrets) → 10.3 (deploy).
 
 ### 10.1 Apply migration 003
 
@@ -334,3 +357,66 @@ Notes:
 | Changes by the other partner do not appear | Wait ~1 s (debounce) or tap the refresh button; check Realtime is enabled. |
 | Old orders changed after editing settings | They should not — each order stores its own `shipping_fee`, `snapp_multiplier`, `rounding_step`. Verify the RPC ran (`setup.sql` re-run). |
 | Icons/manifest 404 on Pages | Make sure all files are in the deployed folder and paths stay relative. |
+| No Telegram message after a new order | `notify` deployed with `--no-verify-jwt`? Secrets set? `select * from app_private.config;` must contain `notify_url` and `webhook_secret`. |
+| A notification never arrives | `select id, kind, attempts, last_error, created_at from outbox order by id desc limit 10;` — after 5 attempts a row stops being retried, so fix the cause (`last_error`) and run `update outbox set attempts = 0 where id = <id>;`. |
+| No phone notification | iOS needs the Home Screen install and permission (10.7); `select user_id, endpoint from push_subscriptions;` must contain your row, and the VAPID secrets must be set. |
+
+---
+
+## 12. Upgrading an existing database
+
+1. **Back up first**: export the orders as CSV from the app («خروجی CSV» in سفارش‌ها). For a
+   version-1 database also run `select * from product_costs;` and `select * from order_private;`
+   in the SQL Editor and save the results — migration 002 drops both tables.
+2. In the SQL Editor run, **in this order**, the three idempotent migrations:
+   `migrations/001_security.sql` → `migrations/002_simplify_products.sql` →
+   `migrations/003_notifications.sql`. Running one twice changes nothing.
+   A fresh database needs none of them: `setup.sql` already contains everything.
+3. Supabase Dashboard → **Authentication → Providers → Email** → turn **OFF** «Allow new users to
+   sign up» (the app has exactly two users, section 5.4 of the spec).
+4. Set the secrets (10.2), deploy the four functions (10.3, 10.6, 10.7), register the Telegram
+   webhook (10.6) and fill `app_private.config` (10.4).
+5. Push the new frontend files — GitHub Pages republishes itself on every push.
+
+---
+
+## 13. Testing
+
+**Automated**
+
+| Where | What |
+|-------|------|
+| `tests.html` in a browser | 37 checks: every money example of section 2, the rounding regressions, the error case and the number-parsing cases of 5.14. |
+| `deno test supabase/functions/_shared/format.test.ts` | 6 checks for the notification messages: Jalali date for a known Tehran timestamp, channel text (with/without code, cancelled, HTML-escaped name), invoice (`owe` + `h_share`, no cost text), the merge rule, the push payload. |
+| SQL harness (`run.js`) | 329 checks: both installation paths, all grants and RLS, the money invariants and the notification RPCs (development only, not shipped). |
+
+**Manual checklist — run once after every deploy**
+
+1. Log in as the shop: chip says «مغازه»; as the page: «پیج»; no old names anywhere.
+2. Add a product (shop price 500,000, page profit 150,000): cash + post total 840,000, owed to
+   the shop 690,000, page share 150,000; Snapp + post 940,000; a 350,000 unit with Snapp + post
+   is 595,000 in the form and in the stored order.
+3. Discount 50,000 with each bearer gives owe 690,000 / 640,000 / 665,000 and page share
+   100,000 / 150,000 / 125,000.
+4. Shop taps «عدم موجودی» on a product: it dims, cannot be added to a new order, the server
+   rejects it too, and the page gets a push/DM. Tap «موجود شد»: back to normal. The page account
+   sees no toggle. Existing orders are unaffected.
+5. Settings: set post fee to 0, save, reload: it stays 0; set Snapp multiplier 1.2: new Snapp
+   orders use it, old ones unchanged.
+6. Page creates an order: the shop gets the full invoice DM; the channel gets «📦 سفارش جدید»
+   with name, Jalali date and «⏳ هنوز ثبت نشده».
+7. Shop marks it shipped without a code (confirm dialog): the page is notified; the order shows
+   «منتظر کد رهگیری» with day count and appears in the Accounts bucket.
+8. Force the daily reminder (`select public.queue_tracking_missing();` in the SQL Editor): both
+   partners get one reminder.
+9. Shop saves the code: within seconds the channel message shows the code and the page gets
+   «کد رهگیری سفارش …». Change the code: the message updates; clear it: the «⏳» line returns.
+10. Cancel an order: the channel message shows the cancelled line; the other partner is notified;
+    reports exclude it.
+11. iPhone: install to the Home Screen, enable notifications in Settings, use the test button,
+    then create an order from the other phone: a push arrives and tapping it opens that order and
+    highlights it.
+12. Break the Telegram token temporarily: orders still save; failed outbox rows keep `last_error`;
+    after fixing, the next wake-up delivers them.
+13. An outsider cannot sign up, and a user without a profile cannot read data or call RPCs.
+14. Old orders created before the migration still display correctly.
