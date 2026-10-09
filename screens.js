@@ -1966,7 +1966,7 @@ var Screens = (function () {
         el('div', { class: 'row wrap', style: 'margin-top:6px', id: 'push-actions' }))));
 
     h.appendChild(el('div', { class: 'card' },
-      el('div', { class: 'card-title' }, el('h3', { text: 'در باره اپلیکیشن' })),
+      el('div', { class: 'card-title' }, el('h3', { text: 'درباره اپلیکیشن' })),
       el('p', { class: 'hint', style: 'margin:0',
         text: 'مدیریت دلسانا — نسخه ۱٫۰. همه مبالغ به تومان و بدون اعشار ثبت می‌شوند. ' +
               'داده‌ها به‌صورت زنده بین دو شریک همگام می‌شوند.' }),
