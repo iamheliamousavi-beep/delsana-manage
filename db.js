@@ -287,6 +287,84 @@
     return DB.fn('send-invoice', { order_id: orderId });
   };
 
+  /* ------------------------------------------------------------ web push */
+  DB.pushSupported = function () {
+    return typeof navigator !== 'undefined' && 'serviceWorker' in navigator &&
+           typeof window !== 'undefined' && 'PushManager' in window &&
+           typeof window !== 'undefined' && 'Notification' in window;
+  };
+
+  DB.pushPermission = function () {
+    if (!DB.pushSupported()) return 'unsupported';
+    return Notification.permission || 'default';
+  };
+
+  DB.vapidKey = function () {
+    var key = (typeof CONFIG !== 'undefined' && CONFIG.vapidPublicKey) || '';
+    return key && key.indexOf('YOUR_') !== 0 ? key : '';
+  };
+
+  function urlBase64ToUint8Array(base64String) {
+    var padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var raw = atob(base64);
+    var out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  async function savePushSubscription(sub) {
+    var json = sub.toJSON();
+    await DB.rpc('save_push_subscription', {
+      p_endpoint: sub.endpoint,
+      p_p256dh: json.keys.p256dh,
+      p_auth: json.keys.auth,
+      p_user_agent: navigator.userAgent
+    });
+  }
+
+  /* silent, on every app start (9.5): permission is already granted, so make
+     sure this device is subscribed and the server knows about it */
+  DB.syncPushSubscription = async function () {
+    if (!DB.pushSupported() || DB.pushPermission() !== 'granted') return null;
+    var reg = await navigator.serviceWorker.ready;
+    var sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      var key = DB.vapidKey();
+      if (!key) return null;
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key)
+      });
+    }
+    await savePushSubscription(sub);
+    return sub;
+  };
+
+  /* «فعال‌سازی اعلان» — must run inside a user gesture */
+  DB.enablePush = async function () {
+    if (!DB.pushSupported()) return { permission: 'unsupported' };
+    var perm = await Notification.requestPermission();
+    if (perm !== 'granted') return { permission: perm };
+    var sub = await DB.syncPushSubscription();
+    return { permission: perm, subscription: sub };
+  };
+
+  DB.disablePush = async function () {
+    if (!DB.pushSupported()) return;
+    var reg = await navigator.serviceWorker.ready;
+    var sub = await reg.pushManager.getSubscription();
+    if (!sub) return;
+    var endpoint = sub.endpoint;
+    await sub.unsubscribe();
+    try { await DB.rpc('remove_push_subscription', { p_endpoint: endpoint }); }
+    catch (e) { /* the row disappears on the next 404/410 anyway */ }
+  };
+
+  DB.testNotify = function () {
+    return DB.fn('test-notify');
+  };
+
   /* -------------------------------------------------------------- realtime */
   DB.subscribe = function (onChange) {
     if (App.channel) return App.channel;

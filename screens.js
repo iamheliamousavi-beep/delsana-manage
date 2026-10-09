@@ -974,6 +974,16 @@ var Screens = (function () {
         rows.forEach(function (o) { list.appendChild(orderCard(o)); });
       }
       updateOrdersCount(rows);
+    },
+
+    /* 9.5 deep links: a notification can arrive while a filter hides the order */
+    clearFilters: function () {
+      orders.f = { q: '', status: '', pay: '', ship: '', pinned: false, noCode: false };
+      var q = $('#ord-q'); if (q) q.value = '';
+      var st = $('#ord-status'); if (st) st.value = '';
+      var pay = $('#ord-pay'); if (pay) pay.value = '';
+      var ship = $('#ord-ship'); if (ship) ship.value = '';
+      UI.qsa('#view-orders .filters input[type=checkbox]').forEach(function (cb) { cb.checked = false; });
     }
   };
 
@@ -1037,13 +1047,7 @@ var Screens = (function () {
     filters.appendChild(el('div', { class: 'field' },
       el('button', {
         class: 'btn tiny block', type: 'button', text: 'پاک‌کردن فیلترها',
-        onclick: function () {
-          orders.f = { q: '', status: '', pay: '', ship: '', pinned: false, noCode: false };
-          $('#ord-q').value = ''; $('#ord-status').value = ''; $('#ord-pay').value = '';
-          $('#ord-ship').value = '';
-          UI.qsa('input[type=checkbox]', filters).forEach(function (cb) { cb.checked = false; });
-          orders.refresh();
-        }
+        onclick: function () { orders.clearFilters(); orders.refresh(); }
       })));
 
     h.appendChild(filters);
@@ -1893,6 +1897,7 @@ var Screens = (function () {
       shell('view-settings', 'v1', buildSettings);
       fillSettings();
       refreshNotify();
+      refreshPush();
       this.refresh();
     },
     refresh: function () { fillSettings(true); }
@@ -1929,7 +1934,7 @@ var Screens = (function () {
           }
         }))));
 
-    /* section 9.5 — notifications card (Telegram half; the phone half comes 9.5) */
+    /* section 9.5 — notifications card (Telegram + phone) */
     h.appendChild(el('div', { class: 'card', id: 'notify-card' },
       el('div', { class: 'card-title' }, el('h3', { text: 'اعلان‌ها' })),
       el('div', { class: 'field' },
@@ -1943,7 +1948,11 @@ var Screens = (function () {
           el('button', {
             class: 'btn', id: 'tg-disconnect', type: 'button', text: 'قطع اتصال',
             onclick: disconnectTelegram
-          })))));
+          }))),
+      el('div', { class: 'field' },
+        el('label', { text: 'اعلان روی گوشی' }),
+        el('p', { class: 'hint', id: 'push-status', text: 'در حال بررسی وضعیت اعلان…' }),
+        el('div', { class: 'row wrap', style: 'margin-top:6px', id: 'push-actions' }))));
 
     h.appendChild(el('div', { class: 'card' },
       el('div', { class: 'card-title' }, el('h3', { text: 'در باره اپلیکیشن' })),
@@ -2035,6 +2044,116 @@ var Screens = (function () {
         await DB.disconnectTelegram();
         UI.toast('اتصال تلگرام قطع شد', 'ok');
         refreshNotify();
+      } catch (e) { showErr(e); }
+    });
+  }
+
+  /* -------------------------------------------- 9.5: phone notifications */
+  async function refreshPush() {
+    var box = $('#push-status'), acts = $('#push-actions');
+    if (!box || !acts) return;
+    acts.innerHTML = '';
+
+    if (!DB.pushSupported()) {
+      box.textContent = 'مرورگر دستگاه شما اعلان وب را پشتیبانی نمی‌کند.';
+      return;
+    }
+
+    var standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) === true ||
+      navigator.standalone === true;
+    if (/iphone|ipad|ipod/i.test(navigator.userAgent) && !standalone) {
+      box.textContent = 'ابتدا اپ را به صفحه اصلی اضافه کنید: دکمه اشتراک‌گذاری (Share)، ' +
+        'سپس Add to Home Screen، و بعد اپ را از صفحه اصلی باز کنید.';
+      return;
+    }
+
+    var perm = DB.pushPermission();
+    if (perm === 'denied') {
+      box.textContent = 'اجازه اعلان رد شده است. برای فعال‌سازی، به تنظیمات گوشی ' +
+        '(Settings → Notifications) بروید و این اپ را مجاز کنید.';
+      return;
+    }
+
+    if (perm === 'default') {
+      box.textContent = 'برای دریافت اعلان روی این دستگاه، دکمه زیر را بزنید.';
+      acts.appendChild(el('button', {
+        class: 'btn primary', id: 'push-enable', type: 'button', text: 'فعال‌سازی اعلان',
+        onclick: enablePush
+      }));
+      return;
+    }
+
+    /* permission granted */
+    var sub = null;
+    try {
+      var reg = await navigator.serviceWorker.ready;
+      sub = await reg.pushManager.getSubscription();
+    } catch (e) { sub = null; }
+
+    if (!sub && !DB.vapidKey()) {
+      box.textContent = 'کلید اعلان (VAPID) هنوز در ابتدای فایل app.js تنظیم نشده است.';
+      return;
+    }
+    if (!sub) {
+      box.textContent = 'اجازه اعلان داده شده اما هنوز ثبت نشده است؛ دکمه زیر را بزنید.';
+      acts.appendChild(el('button', {
+        class: 'btn primary', id: 'push-enable', type: 'button', text: 'فعال‌سازی اعلان',
+        onclick: enablePush
+      }));
+      return;
+    }
+
+    box.textContent = 'فعال است؛ اعلان‌ها روی این دستگاه نمایش داده می‌شوند.';
+    acts.appendChild(el('button', {
+      class: 'btn', id: 'push-disable', type: 'button', text: 'غیرفعال‌سازی',
+      onclick: disablePush
+    }));
+    acts.appendChild(el('button', {
+      class: 'btn', id: 'push-test', type: 'button', text: 'ارسال اعلان آزمایشی',
+      onclick: testPush
+    }));
+  }
+
+  async function enablePush(btn) {
+    await UI.withBusy(btn, async function () {
+      try {
+        var res = await DB.enablePush();
+        if (res.permission === 'unsupported') {
+          UI.toast('مرورگر شما اعلان وب را پشتیبانی نمی‌کند', 'warn');
+        } else if (res.permission !== 'granted') {
+          UI.toast('اجازه اعلان داده نشد؛ از تنظیمات گوشی می‌توانید فعال کنید', 'warn', 5000);
+        } else if (!res.subscription) {
+          UI.toast('کلید اعلان (VAPID) در app.js تنظیم نشده است', 'warn', 5000);
+        } else {
+          UI.toast('اعلان روی گوشی فعال شد', 'ok');
+        }
+        refreshPush();
+      } catch (e) { showErr(e); refreshPush(); }
+    });
+  }
+
+  async function disablePush(btn) {
+    await UI.withBusy(btn, async function () {
+      try {
+        await DB.disablePush();
+        UI.toast('اعلان روی گوشی غیرفعال شد', 'ok');
+        refreshPush();
+      } catch (e) { showErr(e); refreshPush(); }
+    });
+  }
+
+  async function testPush(btn) {
+    await UI.withBusy(btn, async function () {
+      try {
+        var res = await DB.testNotify();
+        var sent = (res && res.push && res.push.sent) || 0;
+        var failed = (res && res.push && res.push.failed) || 0;
+        var tg = !!(res && res.telegram === 'sent');
+        var parts = [tg ? 'پیام تلگرام ارسال شد' : 'تلگرام وصل نیست'];
+        var line = 'اعلان گوشی: ' + UI.toFaDigits(sent) + ' دستگاه';
+        if (failed) line += '، ' + UI.toFaDigits(failed) + ' ناموفق';
+        parts.push(line);
+        UI.toast('اعلان آزمایشی — ' + parts.join(' · '), (tg || sent > 0) ? 'ok' : 'warn', 6000);
       } catch (e) { showErr(e); }
     });
   }

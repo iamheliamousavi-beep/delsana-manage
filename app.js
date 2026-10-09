@@ -10,7 +10,9 @@ const CONFIG = {
   supabaseUrl: 'https://jmeloxuzdhabbszkthgt.supabase.co',        /* e.g. https://abcdefgh.supabase.co */
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImptZWxveHV6ZGhhYmJzemt0aGd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyOTIwNDYsImV4cCI6MjEwNjg2ODA0Nn0.0y6-W_ACDcGw4DHwtle7u6oO4zDnw5hRpZODvo4xkO0', /* the "anon public" key only        */
   /* Telegram bot of the app (no @), Dashboard -> Edge Functions -> Secrets */
-  telegramBotUsername: 'YOUR_BOT_USERNAME'                        /* e.g. DelsanaBot                   */
+  telegramBotUsername: 'YOUR_BOT_USERNAME',                       /* e.g. DelsanaBot                   */
+  /* Web Push: npx web-push generate-vapid-keys -> the PUBLIC key */
+  vapidPublicKey: 'YOUR_VAPID_PUBLIC_KEY'
 };
 /* ------------------------------------------------------------------------ */
 
@@ -104,6 +106,8 @@ const CONFIG = {
       switchView(localStorage.getItem('delsana-view') || 'products', true);
       startRealtime();
       startPolling();
+      applyDeepLink();
+      startPushSync();
       state.ready = true;
     } catch (e) {
       UI.toast(UI.errMessage(e), 'err');
@@ -171,6 +175,61 @@ const CONFIG = {
     badge.hidden = n === 0;
     badge.textContent = UI.toFaDigits(String(n));
     badge.setAttribute('aria-label', UI.toFaDigits(String(n)) + ' سفارش سنجاق‌شده');
+    /* section 9.5: optional home-screen badge */
+    try {
+      if (n > 0 && navigator.setAppBadge) navigator.setAppBadge(n);
+      else if (n === 0 && navigator.clearAppBadge) navigator.clearAppBadge();
+    } catch (e) { /* not supported */ }
+  }
+
+  /* ----------------------------------------------------------- deep links */
+  /* 9.5: ?view=<view>&order=<id> on start and on notification click */
+  function readDeepLink() {
+    try {
+      var q = new URLSearchParams(location.search);
+      return { view: q.get('view'), order: q.get('order') };
+    } catch (e) { return { view: null, order: null }; }
+  }
+
+  function clearDeepLink() {
+    try {
+      if (!location.search) return;
+      history.replaceState(null, '', location.pathname + location.hash);
+    } catch (e) { /* private mode */ }
+  }
+
+  function applyDeepLink() {
+    var link = readDeepLink();
+    if (!link.view && !link.order) return;
+    var view = link.view || 'orders';
+    if (VIEWS.indexOf(view) === -1) view = link.order ? 'orders' : 'products';
+    switchView(view, true);
+    clearDeepLink();
+    if (link.order) highlightOrder(link.order);
+  }
+
+  function highlightOrder(id) {
+    var attempt = 0;
+    var cleared = false;
+    (function tick() {
+      var card = document.querySelector('.order-card[data-order-id="' + id + '"]');
+      if (card) {
+        try { card.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { /* noop */ }
+        card.classList.add('flash');
+        setTimeout(function () { card.classList.remove('flash'); }, 3000);
+        return;
+      }
+      /* the order may be hidden behind a filter: clear it once, then keep
+         retrying until the data has arrived */
+      var known = App.orders.some(function (o) { return o.id === id; });
+      if (known && !cleared && Screens.orders && Screens.orders.clearFilters) {
+        cleared = true;
+        Screens.orders.clearFilters();
+        Screens.orders.refresh();
+      }
+      if (++attempt > 40) return;   /* ~10 s: the data never arrived */
+      setTimeout(tick, 250);
+    })();
   }
 
   /* ------------------------------------------------------------ realtime */
@@ -270,6 +329,34 @@ const CONFIG = {
       UI.toast(UI.errMessage(e.reason), 'err');
     });
     window.addEventListener('error', function () { /* keep the app alive */ });
+  }
+
+  /* ---------------------------------------------------------------- push */
+  /* 9.5: on every start with permission granted, silently re-check the
+     subscription and make sure the server knows about it */
+  function startPushSync() {
+    try {
+      cacheVapidKey();
+      if (DB.pushSupported() && DB.pushPermission() === 'granted') {
+        DB.syncPushSubscription().catch(function () { /* next start */ });
+      }
+    } catch (e) { /* never block the app */ }
+  }
+
+  /* the service worker needs the public key for pushsubscriptionchange */
+  function cacheVapidKey() {
+    var key = CONFIG.vapidPublicKey || '';
+    if (!key || key.indexOf('YOUR_') === 0 || !window.caches) return;
+    caches.keys().then(function (keys) {
+      var mine = keys.filter(function (k) { return k.indexOf('delsana-') === 0; });
+      return Promise.all(mine.map(function (k) {
+        return caches.open(k).then(function (c) {
+          return c.put(new Request('./vapid.key'), new Response(key, {
+            headers: { 'content-type': 'text/plain; charset=utf-8' }
+          }));
+        });
+      }));
+    }).catch(function () { /* best effort */ });
   }
 
   /* ---------------------------------------------------------------- main */

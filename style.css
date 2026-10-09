@@ -619,6 +619,12 @@ input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--mute
   width: 4px;
   background: var(--brand);
 }
+/* deep-link target (9.5): brief highlight after a notification click */
+@keyframes card-flash {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 60%, transparent); }
+}
+.order-card.flash { animation: card-flash 1.1s ease-in-out 2; border-color: var(--brand); }
 .order-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .order-head .who { min-width: 0; }
 .order-head .who .cust { font-weight: 700; font-size: 1rem; }

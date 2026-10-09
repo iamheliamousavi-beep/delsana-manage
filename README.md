@@ -70,18 +70,22 @@ If your project disabled Realtime, enable it under **Database → Replication**.
 
 ## 3. Configure the frontend
 
-Open `app.js` and fill the two values at the very top:
+Open `app.js` and fill the values at the very top:
 
 ```js
 const CONFIG = {
   supabaseUrl: 'https://abcdefgh.supabase.co',      // Dashboard -> Project Settings -> API
   supabaseAnonKey: 'eyJ...'                          // the "anon public" key only
+  telegramBotUsername: 'DelsanaBot',                 // the bot name without @ (notifications)
+  vapidPublicKey: 'B...'                             // npx web-push generate-vapid-keys
 };
 ```
 
 Rules:
 - **Never** put the `service_role` key in the frontend. Only the anon key.
 - The app refuses to start (and shows a Persian message) while these still read `YOUR_…`.
+- `telegramBotUsername` and `vapidPublicKey` are optional: without them the matching button in
+  تنظیمات explains what is missing, everything else keeps working.
 
 ---
 
@@ -298,6 +302,25 @@ link, press **Start** there, and the app shows «متصل است». «قطع ا�
 
 The invoice button on every order card («فاکتور در تلگرام من») sends the full invoice to your own
 Telegram chat; without a link it asks you to connect first.
+
+### 10.7 Web Push (notifications on the phone)
+
+1. Generate the keys once (needs Node.js): `npx web-push generate-vapid-keys`.
+2. The **public** key goes into `app.js` (`vapidPublicKey`). The **private** key, the subject
+   (`VAPID_SUBJECT=mailto:you@example.com`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`,
+   `TELEGRAM_CHANNEL_ID`, `TELEGRAM_WEBHOOK_SECRET`, `WEBHOOK_SECRET` and `APP_URL` go into
+   **Edge Functions → Secrets** (`supabase secrets set NAME=value` works too).
+3. Deploy the test function (JWT verification stays **ON**):
+   `supabase functions deploy test-notify`.
+4. Open تنظیمات → «اعلان‌ها» → «فعال‌سازی اعلان», then «ارسال اعلان آزمایشی».
+
+Notes:
+- **iOS:** pushes only reach the Home Screen app (Share → Add to Home Screen, then open it from
+  there); the Settings screen says exactly that when the app is not installed yet.
+- Without the VAPID keys `notify` simply skips the push and still sends the Telegram DMs, so the
+  app works before you set this up.
+- Every notification tap opens the app on the right screen and highlights the order (deep link
+  `?view=orders&order=<id>`).
 
 ---
 
