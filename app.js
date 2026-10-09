@@ -12,7 +12,7 @@ const CONFIG = {
   /* Telegram bot of the app (no @), Dashboard -> Edge Functions -> Secrets */
   telegramBotUsername: 'Delsanamanager_Bot',                       /* e.g. DelsanaBot                   */
   /* Web Push: npx web-push generate-vapid-keys -> the PUBLIC key */
-  vapidPublicKey: 'YOUR_VAPID_PUBLIC_KEY'
+  vapidPublicKey: 'BBmKYSGKA7gORXVIstbVIcp-gvSqfjBrY-H6FBEL3laxU87mXPQM3uLv1BlM-xJ_GrQ0CNE7iECtl4SxdYkxsLQ'
 };
 /* ------------------------------------------------------------------------ */
 
