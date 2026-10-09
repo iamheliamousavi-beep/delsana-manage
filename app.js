@@ -10,7 +10,7 @@ const CONFIG = {
   supabaseUrl: 'https://jmeloxuzdhabbszkthgt.supabase.co',        /* e.g. https://abcdefgh.supabase.co */
   supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImptZWxveHV6ZGhhYmJzemt0aGd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyOTIwNDYsImV4cCI6MjEwNjg2ODA0Nn0.0y6-W_ACDcGw4DHwtle7u6oO4zDnw5hRpZODvo4xkO0', /* the "anon public" key only        */
   /* Telegram bot of the app (no @), Dashboard -> Edge Functions -> Secrets */
-  telegramBotUsername: 'YOUR_BOT_USERNAME',                       /* e.g. DelsanaBot                   */
+  telegramBotUsername: 'Delsanamanager_Bot',                       /* e.g. DelsanaBot                   */
   /* Web Push: npx web-push generate-vapid-keys -> the PUBLIC key */
   vapidPublicKey: 'YOUR_VAPID_PUBLIC_KEY'
 };
