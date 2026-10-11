@@ -323,7 +323,7 @@ var Screens = (function () {
     ));
 
     var saveBtn = el('button', { class: 'btn primary small', type: 'button', text: 'ذخیره' });
-    var edit = el('div', { class: 'edit-grid' });
+    var edit = el('div', { class: 'edit-grid', hidden: true });
 
     if (App.isMahdi) {
       var nameIn = el('input', { type: 'text', value: p.name, 'aria-label': 'نام محصول' });
@@ -371,7 +371,21 @@ var Screens = (function () {
       });
     }
 
-    var actions = el('div', { class: 'row wrap', style: 'margin-top:10px' }, saveBtn);
+    /* the edit form (name/price inputs + save) stays collapsed until
+       the single «ویرایش» button opens it; availability and archive stay
+       separate one-tap buttons in the actions row */
+    edit.appendChild(el('div', { class: 'row wrap', style: 'margin-top:6px' }, saveBtn));
+
+    var editToggle = el('button', {
+      class: 'btn small', type: 'button', text: 'ویرایش',
+      'aria-label': 'ویرایش ' + p.name,
+      onclick: function () {
+        edit.hidden = !edit.hidden;
+        editToggle.textContent = edit.hidden ? 'ویرایش' : 'بستن ویرایش';
+      }
+    });
+
+    var actions = el('div', { class: 'row wrap', style: 'margin-top:10px' }, editToggle);
     if (App.isMahdi) {
       /* one tap toggles; confirming is only needed when hiding a product */
       actions.appendChild(el('button', {

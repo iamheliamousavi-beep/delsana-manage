@@ -184,7 +184,9 @@ export function mergeEvents(rows: OutboxRow[]): Merged {
     available: typeof av.available === 'boolean' ? (av.available as boolean) : null,
     priceCount: typeof pr.count === 'number' ? (pr.count as number) : null,
     reminderOrderIds: Array.isArray(tm.order_ids) ? (tm.order_ids as string[]) : [],
-    touchesChannel: has('order_created') || has('tracking_changed') || cancelled,
+    // The channel post carries a `وضعیت:` line, so every status change has
+    // to create or edit it — not just creation, tracking and cancellation.
+    touchesChannel: has('order_created') || has('status_changed') || has('tracking_changed') || cancelled,
     isProductEvent: has('prices_changed') || has('availability_changed'),
   };
 }
@@ -211,10 +213,10 @@ export function channelAction(
 
 export function buildChannelText(order: Order, cancelledLine = false): string {
   const lines = [
-    '📦 سفارش جدید',
     `👤 مشتری: <b>${escapeHtml(order.customer)}</b>`,
     `📅 تاریخ ثبت: ${jalaliDate(order.created_at)}`,
     `🚚 کد رهگیری: ${order.tracking ? `<code>${escapeHtml(order.tracking)}</code>` : NO_TRACKING}`,
+    `وضعیت: ${statusLabel(order.status)}`,
   ];
   if (cancelledLine || order.status === 'cancelled') lines.push('❌ این سفارش لغو شد');
   return lines.join('\n');

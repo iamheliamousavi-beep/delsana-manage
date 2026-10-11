@@ -14,6 +14,14 @@ Notable changes to **Delsana Management**. Version 2 implements the master promp
 - `test-notify` and `send-invoice` intentionally ignore the flag (both target only the
   caller's own chat/devices), so you can still verify your own link mid-test.
 
+## Unreleased — product edit toggle, channel post cleanup
+
+- Product cards: name/price inputs and **ذخیره** live in a collapsed edit form behind one
+  «ویرایش» button; «عدم موجودی»/«موجود شد» and «بایگانی» stay as separate one-tap buttons.
+- Channel posts no longer carry the «باز کردن در اپ» button (DMs still do).
+- Channel text is now customer, Jalali date, tracking code and `وضعیت: …` (no header line);
+  every status change edits the post so the status line stays current. Redeploy `notify`.
+
 ## Version 2 — 2026-10-09
 
 ### Phase 9 — post-office list import

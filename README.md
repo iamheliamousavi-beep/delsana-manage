@@ -313,9 +313,9 @@ only the built-in cron wake-up (every 2 minutes) delivers.
 ### 10.5 Verify the tracking-added-later flow
 
 1. As **پیج** create an order → the shop gets the invoice DM, the channel shows
-   «📦 سفارش جدید» with `⏳ هنوز ثبت نشده`.
-2. As **مغازه** mark it shipped **without** a code (confirm dialog) → the page is notified.
-   The channel message does not change (there is still no code).
+   customer, Jalali date, `⏳ هنوز ثبت نشده` and `وضعیت: …` (no button on channel posts).
+2. As **مغازه** mark it shipped **without** a code (confirm dialog) → the page is notified
+   and the channel message edits its `وضعیت:` line (still no code).
 3. Save the tracking code → within seconds the channel message shows `کد رهگیری` in `<code>`
    and the page gets «🚚 کد رهگیری سفارش …». This is an **edit** of the same message, never a
    second one.
@@ -430,8 +430,8 @@ Notes:
    sees no toggle. Existing orders are unaffected.
 5. Settings: set post fee to 0, save, reload: it stays 0; set Snapp multiplier 1.2: new Snapp
    orders use it, old ones unchanged.
-6. Page creates an order: the shop gets the full invoice DM; the channel gets «📦 سفارش جدید»
-   with name, Jalali date and «⏳ هنوز ثبت نشده».
+6. Page creates an order: the shop gets the full invoice DM; the channel gets
+   customer, Jalali date, «⏳ هنوز ثبت نشده» and the status line (no «باز کردن در اپ» button there).
 7. Shop marks it shipped without a code (confirm dialog): the page is notified; the order shows
    «منتظر کد رهگیری» with day count and appears in the Accounts bucket.
 8. Force the daily reminder (`select public.queue_tracking_missing();` in the SQL Editor): both

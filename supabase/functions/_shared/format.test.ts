@@ -84,11 +84,11 @@ Deno.test('12.4 channel message builder', () => {
   const withCode = buildChannelText(order);
   assertEquals(
     withCode,
-    '📦 سفارش جدید\n' +
-      '👤 مشتری: <b>مشتری تست</b>\n' +
+    '👤 مشتری: <b>مشتری تست</b>\n' +
       '📅 تاریخ ثبت: ۱۴۰۵/۰۷/۱۷\n' +
-      '🚚 کد رهگیری: <code>POST-123</code>',
-    'the message holds exactly customer, Jalali date and code',
+      '🚚 کد رهگیری: <code>POST-123</code>\n' +
+      'وضعیت: ارسال شده',
+    'the message holds exactly customer, Jalali date, code and status',
   );
   excludes(withCode, '09121234567', 'the channel never shows a phone number');
   excludes(withCode, 'تهران، خیابان', 'the channel never shows an address');
@@ -179,6 +179,10 @@ Deno.test('12.6 merge rule produces a single message', () => {
     payload: { count: 3 },
   }]);
   assertEquals(buildProductEventDm(prices), 'قیمت ۳ محصول از مغازه به‌روز شد', 'price text');
+
+  // a bare status change also refreshes the channel's وضعیت line
+  const onlyStatus = mergeEvents([row('status_changed', { from: 'settled', to: 'shipped' })]);
+  assert(onlyStatus.touchesChannel, 'a status change alone touches the channel (وضعیت line)');
 
   // the daily reminder lists at most ten customers
   const many = Array.from({ length: 12 }, (_, i) => ({ customer: `مشتری ${i}`, days: 4 }));

@@ -304,13 +304,13 @@ async function syncChannel(admin: Admin, order: OrderRow, m: F.Merged): Promise<
   const chat = channelId();
   const text = F.buildChannelText(order, m.statusTo === 'cancelled');
   const hash = await sha256(text);
-  const buttons = [{ text: 'باز کردن در اپ', url: F.appUrl(baseUrl(), 'orders', order.id) }];
 
+  // Channel posts never carry the "open in app" button — DMs do (deliverDm).
   const action = F.channelAction(order.tg_channel_msg_id, order.tg_channel_hash, hash);
   if (action === 'skip') return;
 
   if (action === 'edit') {
-    const out = await editMessageText(chat, order.tg_channel_msg_id!, text, buttons);
+    const out = await editMessageText(chat, order.tg_channel_msg_id!, text);
     if (out.status !== 'missing') {
       await saveChannelRef(admin, order.id, out.messageId, hash);
       return;
@@ -318,7 +318,7 @@ async function syncChannel(admin: Admin, order: OrderRow, m: F.Merged): Promise<
     // the message is gone (deleted, or the bot was re-added): post a new one
   }
 
-  const messageId = await sendMessage(chat, text, buttons);
+  const messageId = await sendMessage(chat, text);
   await saveChannelRef(admin, order.id, messageId, hash);
 }
 
