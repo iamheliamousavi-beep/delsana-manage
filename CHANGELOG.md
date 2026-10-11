@@ -3,6 +3,17 @@
 Notable changes to **Delsana Management**. Version 2 implements the master prompt
 (`delsana-master-prompt.md`); older history is listed at the end.
 
+## Unreleased — test mode («حالت تست»)
+
+- Shared «حالت تست (بی‌صدا)» toggle in Settings → «اعلان‌ها»: while on, the `notify`
+  Edge Function drops every automatic event (partner DM, channel post/edit, partner
+  push) by marking claimed outbox rows processed without sending — nothing piles up
+  for later. Both partners see the same switch (shared `settings` row).
+- New `public.settings` key `telegram_paused` (`'0'`/`'1'`); `settings_update` RLS policy
+  extended; migration `006_telegram_pause.sql` mirrored into `setup.sql`.
+- `test-notify` and `send-invoice` intentionally ignore the flag (both target only the
+  caller's own chat/devices), so you can still verify your own link mid-test.
+
 ## Version 2 — 2026-10-09
 
 ### Phase 9 — post-office list import

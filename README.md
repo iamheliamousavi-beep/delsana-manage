@@ -170,7 +170,7 @@ awaiting_snapp ─────► paid       │
 | **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment, shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export, and «ایمپورت لیست پست» (section 8.1). |
 | **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
 | **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, «سهم پیج», «پرداختی به مغازه», top-5 products, cash vs Snapp, post vs courier, discounts by bearer — the same for both partners. |
-| **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications), and the backup reminder. |
+| **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications, plus shared «حالت تست (بی‌صدا)» which drops the automatic partner/channel/push notifications while you try features — your own «اعلان آزمایشی» and invoice still work), and the backup reminder. |
 
 **Roles.** Version 2 has no secret numbers any more: both partners see `base`, `hp`, totals,
 `owe` and `h_share`. What the database still enforces through **RLS** (not only the UI): only the
@@ -389,13 +389,16 @@ Notes:
 1. **Back up first**: export the orders as CSV from the app («خروجی CSV» in سفارش‌ها). For a
    version-1 database also run `select * from product_costs;` and `select * from order_private;`
    in the SQL Editor and save the results — migration 002 drops both tables.
-2. In the SQL Editor run, **in this order**, the three idempotent migrations:
+2. In the SQL Editor run, **in this order**, the idempotent migrations:
    `migrations/001_security.sql` → `migrations/002_simplify_products.sql` →
-   `migrations/003_notifications.sql` → `migrations/004_bulk_set_tracking.sql`.
+   `migrations/003_notifications.sql` → `migrations/004_bulk_set_tracking.sql` →
+   `migrations/005_fix_bulk_set_tracking.sql` → `migrations/006_telegram_pause.sql`.
    Running one twice changes nothing.
    A fresh database needs none of them: `setup.sql` already contains everything.
    Migration 004 adds the `bulk_set_tracking` RPC (section 8.1); until it is applied the
    «ایمپورت لیست پست» button reports a missing-RPC error and changes nothing.
+   Migration 006 adds the shared `telegram_paused` setting («حالت تست»); until it is
+   applied the toggle reports an error and notifications behave as before (live).
 3. Supabase Dashboard → **Authentication → Providers → Email** → turn **OFF** «Allow new users to
    sign up» (the app has exactly two users, section 5.4 of the spec).
 4. Set the secrets (10.2), deploy the four functions (10.3, 10.6, 10.7), register the Telegram
@@ -444,3 +447,6 @@ Notes:
     after fixing, the next wake-up delivers them.
 13. An outsider cannot sign up, and a user without a profile cannot read data or call RPCs.
 14. Old orders created before the migration still display correctly.
+15. Test mode: in Settings → «اعلان‌ها» tap «شروع تست (بی‌صدا)», create an order from the
+    other phone — the partner gets no DM, push or channel message; your own «ارسال اعلان
+    آزمایشی» and «فاکتور در تلگرام من» still work. Tap «پایان تست» afterwards.

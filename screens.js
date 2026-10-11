@@ -2373,10 +2373,11 @@ var Screens = (function () {
       shell('view-settings', 'v1', buildSettings);
       fillSettings();
       refreshNotify();
+      refreshTelegramPaused();
       refreshPush();
       this.refresh();
     },
-    refresh: function () { fillSettings(true); }
+    refresh: function () { fillSettings(true); refreshTelegramPaused(); }
   };
 
   function buildSettings(h) {
@@ -2435,6 +2436,14 @@ var Screens = (function () {
           el('button', {
             class: 'btn', id: 'tg-disconnect', type: 'button', text: 'قطع اتصال',
             onclick: disconnectTelegram
+          }))),
+      el('div', { class: 'field' },
+        el('label', { text: 'حالت تست (بی‌صدا)' }),
+        el('p', { class: 'hint', id: 'tg-pause-status', text: '…' }),
+        el('div', { class: 'row wrap', style: 'margin-top:6px' },
+          el('button', {
+            class: 'btn', id: 'tg-pause-toggle', type: 'button', text: 'شروع تست (بی‌صدا)',
+            onclick: toggleTelegramPaused
           }))),
       el('div', { class: 'field' },
         el('label', { text: 'اعلان روی گوشی' }),
@@ -2532,6 +2541,42 @@ var Screens = (function () {
         UI.toast('اتصال تلگرام قطع شد', 'ok');
         refreshNotify();
       } catch (e) { showErr(e); }
+    });
+  }
+
+  /* ----------------------------------- 006: test mode (shared pause) */
+  function isTelegramPaused() {
+    return !!(App.settings && App.settings.telegram_paused);
+  }
+
+  /* Sync read from App.settings (already loaded + kept fresh by realtime),
+     so both partners see the same switch without an extra RPC round-trip. */
+  function refreshTelegramPaused() {
+    var box = $('#tg-pause-status');
+    var btn = $('#tg-pause-toggle');
+    if (!box || !btn) return;
+    var paused = isTelegramPaused();
+    box.textContent = paused
+      ? 'فعال است؛ اعلان‌های خودکار (پیام شریک، پیام کانال و اعلان گوشی او) ارسال نمی‌شود. «اعلان آزمایشی» و «فاکتور در تلگرام من» همچنان کار می‌کنند.'
+      : 'خاموش است؛ اعلان‌ها عادی ارسال می‌شوند. قبل از تست، «شروع تست» را بزنید تا شریک شما پیام آزمایشی نگیرد.';
+    btn.textContent = paused ? 'پایان تست (فعال‌سازی مجدد)' : 'شروع تست (بی‌صدا)';
+    btn.className = paused ? 'btn primary' : 'btn';
+  }
+
+  async function toggleTelegramPaused() {
+    var paused = isTelegramPaused();
+    if (!paused) {
+      var yes = await UI.confirm(
+        'اعلان‌های خودکار (پیام شریک، پیام کانال و اعلان گوشی او) تا پایان تست ارسال نمی‌شود. «اعلان آزمایشی» و فاکتور خودتان همچنان کار می‌کند.',
+        { title: 'شروع تست بی‌صدا', okLabel: 'شروع تست' });
+      if (!yes) return;
+    }
+    await UI.withBusy($('#tg-pause-toggle'), async function () {
+      try {
+        await DB.setTelegramPaused(!paused);
+        UI.toast(!paused ? 'حالت تست فعال شد؛ اعلان‌ها بی‌صدا شدند' : 'حالت تست تمام شد؛ اعلان‌ها فعال شدند', 'ok');
+        refreshTelegramPaused();
+      } catch (e) { showErr(e); throw e; }
     });
   }
 

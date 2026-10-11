@@ -10,7 +10,7 @@
     profile: null,
     role: null,
     isMahdi: false,
-    settings: { post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000 },
+    settings: { post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000, telegram_paused: false },
     products: [],
     orders: [],
     view: 'products',
@@ -127,11 +127,12 @@
 
   DB.loadSettings = async function () {
     var rows = await unwrap(App.supabase.from('settings').select('key, value'));
-    var s = { post_fee: DEFAULTS.post_fee, snapp_multiplier: DEFAULTS.snapp_multiplier, rounding_step: DEFAULTS.rounding_step };
+    var s = { post_fee: DEFAULTS.post_fee, snapp_multiplier: DEFAULTS.snapp_multiplier, rounding_step: DEFAULTS.rounding_step, telegram_paused: false };
     (rows || []).forEach(function (r) {
       if (r.key === 'post_fee') s.post_fee = Math.trunc(readSetting(r.value, DEFAULTS.post_fee, true));
       else if (r.key === 'snapp_multiplier') s.snapp_multiplier = readSetting(r.value, DEFAULTS.snapp_multiplier, false);
       else if (r.key === 'rounding_step') s.rounding_step = Math.trunc(readSetting(r.value, DEFAULTS.rounding_step, false));
+      else if (r.key === 'telegram_paused') s.telegram_paused = String(r.value) === '1';
     });
     App.settings = s;
     return s;
@@ -150,6 +151,15 @@
     }
     await DB.loadSettings();
     return App.settings;
+  };
+
+  /* Test mode (migration 006): shared kill-switch for the automatic
+     notifications. Only this one row is touched, so saving prices can never
+     clobber it and toggling it can never clobber the prices. */
+  DB.setTelegramPaused = async function (paused) {
+    await unwrap(App.supabase.from('settings').update({ value: paused ? '1' : '0' }).eq('key', 'telegram_paused'));
+    await DB.loadSettings();
+    return App.settings.telegram_paused;
   };
 
   /* -------------------------------------------------------------- products */

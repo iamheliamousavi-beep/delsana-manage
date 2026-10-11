@@ -144,7 +144,8 @@ alter table public.settings enable row level security;
 insert into public.settings (key, value) values
   ('post_fee', '190000'),
   ('snapp_multiplier', '1.15'),
-  ('rounding_step', '5000')
+  ('rounding_step', '5000'),
+  ('telegram_paused', '0')
 on conflict (key) do nothing;
 
 drop policy if exists settings_select on public.settings;
@@ -159,7 +160,8 @@ create policy settings_update on public.settings
   using (public.is_member())
   with check (public.is_member() and (
     (key = 'snapp_multiplier' and value ~ '^[0-9]+(\.[0-9]+)?$') or
-    (key in ('post_fee', 'rounding_step') and value ~ '^[0-9]+$')));
+    (key in ('post_fee', 'rounding_step') and value ~ '^[0-9]+$') or
+    (key = 'telegram_paused' and value in ('0', '1'))));
 
 -- --------------------------------------------------------------------------
 -- orders (both partners read; writes only through RPCs)

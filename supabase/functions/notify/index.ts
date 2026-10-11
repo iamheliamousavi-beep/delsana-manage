@@ -40,6 +40,29 @@ function baseUrl(): string {
   return (Deno.env.get('APP_URL') ?? '').replace(/\/+$/, '');
 }
 
+/**
+ * Migration 006 — test mode. One shared `public.settings` switch both
+ * partners toggle from Settings → «حالت تست (بی‌صدا)». While it is '1' the
+ * caller drops every automatic event (partner DMs, channel posts/edits and
+ * partner pushes) by marking the claimed rows processed without sending.
+ * A missing row (database without the migration) means "not paused".
+ * `test-notify` and `send-invoice` never read this flag on purpose: both
+ * target only the caller's own chat/devices.
+ */
+async function telegramPaused(admin: Admin): Promise<boolean> {
+  try {
+    const { data, error } = await admin
+      .from('settings')
+      .select('value')
+      .eq('key', 'telegram_paused')
+      .maybeSingle();
+    if (error) return false;
+    return String((data as { value?: string } | null)?.value) === '1';
+  } catch {
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   const secret = Deno.env.get('WEBHOOK_SECRET');
   const given = req.headers.get('x-webhook-secret');
@@ -54,6 +77,7 @@ Deno.serve(async (req) => {
 
   const profiles = await loadProfiles(admin);
   const base = baseUrl();
+  const paused = await telegramPaused(admin);
   let processed = 0;
   let failed = 0;
 
@@ -64,6 +88,16 @@ Deno.serve(async (req) => {
     if (error) return json({ error: error.message, processed, failed }, 500);
     const rows = (data ?? []) as Row[];
     if (rows.length === 0) break;
+
+    // Test mode (006): drop everything silently — no partner DM, no channel
+    // post/edit, no partner push, and no retry pile-up on resume.
+    if (paused) {
+      for (const group of groupRows(rows)) {
+        await markProcessed(admin, group);
+        processed += group.length;
+      }
+      continue;
+    }
 
     for (const group of groupRows(rows)) {
       try {
