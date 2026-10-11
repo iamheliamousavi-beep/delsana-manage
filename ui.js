@@ -404,6 +404,8 @@
       ['duplicate key', 'این رکورد قبلاً ثبت شده است'],
       ['violates check', 'مقدار واردشده مجاز نیست'],
       ['permission denied', 'شما دسترسی لازم برای این عملیات را ندارید'],
+      ['could not find the function', 'این قابلیت هنوز روی دیتابیس فعال نشده است؛ migration 004_bulk_set_tracking.sql را در SQL Editor اجرا کنید'],
+      ['PGRST202', 'این قابلیت هنوز روی دیتابیس فعال نشده است؛ migration 004_bulk_set_tracking.sql را در SQL Editor اجرا کنید'],
       ['does not exist', 'داده موردنظر پیدا نشد؛ صفحه را تازه‌سازی کنید'],
       ['aborted', 'درخواست ناتمام ماند؛ دوباره تلاش کنید'],
       ['onAuthStateChange', 'خطا در وضعیت ورود']

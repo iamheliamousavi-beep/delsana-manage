@@ -124,3 +124,7 @@ $$;
 
 revoke all on function public.bulk_set_tracking(jsonb, boolean, boolean) from PUBLIC, anon, authenticated;
 grant execute on function public.bulk_set_tracking(jsonb, boolean, boolean) to authenticated, service_role;
+
+-- make PostgREST pick the new function up immediately (harmless if repeated);
+-- without this a stale schema cache keeps answering 400/404 for a few seconds
+notify pgrst, 'reload schema';

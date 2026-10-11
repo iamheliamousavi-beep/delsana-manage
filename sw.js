@@ -4,7 +4,7 @@
    Version the CACHE name on every deploy that changes static files. */
 'use strict';
 
-var CACHE = 'delsana-v9';
+var CACHE = 'delsana-v10';
 var SHELL = [
   './index.html',
   './style.css',
@@ -48,6 +48,16 @@ self.addEventListener('fetch', function (event) {
   var url = new URL(req.url);
   if (url.origin !== self.location.origin) return;        /* CDN/fonts → browser default */
 
+  /* respondWith(undefined) throws "Failed to convert value to 'Response'",
+     so every path must end in a real Response — even a synthetic 503. */
+  function offlineFallback() {
+    return new Response('آفلاین هستید؛ اتصال اینترنت را بررسی کنید', {
+      status: 503,
+      statusText: 'Offline',
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+    });
+  }
+
   /* navigations: network first so a new deploy is picked up immediately */
   if (req.mode === 'navigate') {
     event.respondWith(
@@ -58,7 +68,9 @@ self.addEventListener('fetch', function (event) {
         }
         return res;
       }).catch(function () {
-        return caches.match('./index.html');
+        return caches.match('./index.html').then(function (hit) {
+          return hit || offlineFallback();
+        });
       })
     );
     return;
@@ -73,7 +85,7 @@ self.addEventListener('fetch', function (event) {
           caches.open(CACHE).then(function (c) { c.put(req, copy); });
         }
         return res;
-      }).catch(function () { return hit; });
+      }).catch(function () { return hit || offlineFallback(); });
       return hit || net;
     })
   );

@@ -26,7 +26,8 @@ Notable changes to **Delsana Management**. Version 2 implements the master promp
 - Migration `004_bulk_set_tracking.sql` mirrored into `setup.sql` (grant list included);
   apply it in the Supabase SQL Editor before pushing (see README §12).
 - `tests.html` section ۴) covers `postimport.js` (normalisation, parse, matching) with
-  invented fixtures; service-worker cache bumped to `delsana-v9` (+`./postimport.js`).
+  invented fixtures; service-worker cache bumped to `delsana-v10` (+`./postimport.js`,
+  and every fetch path now returns a real offline `Response` instead of `undefined`).
 
 ### Phase 8 — cleanup and documentation
 - `.gitignore` added (`.idea/`, `.DS_Store`, `node_modules/`); `.idea/` and the old
