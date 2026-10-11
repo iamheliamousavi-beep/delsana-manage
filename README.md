@@ -4,7 +4,7 @@ A small, production-ready PWA for the Delsana cosmetics business (Mahdi's wholes
 Plain HTML/CSS/vanilla JavaScript, no framework, no build step, no `npm`. Backend is **Supabase** (Postgres + RLS + Realtime).
 
 - Persian UI, RTL, light/dark theme, mobile-first (works on phone and desktop).
-- Two accounts only: `mahdi` (full access) and `helia` (own profit only).
+- Three roles: `admin` (full access, «ادمین»), `mahdi` (store, full access) and `helia` (page, own profit only).
 - All money math lives in **one** pure file, `calc.js`, reused by the UI, by `tests.html`, and mirrored by the server-side `create_order` RPC.
 
 ---
@@ -48,11 +48,13 @@ Plain HTML/CSS/vanilla JavaScript, no framework, no build step, no `npm`. Backen
    `set_availability`, `bulk_price_update`, `is_member`/`is_mahdi`/`my_role` and the
    notification RPCs described in section 10.
 
-### 2.3 Create the two users
+### 2.3 Create the users (admin + page; store slot stays empty)
+
 1. Dashboard → **Authentication → Users → Add user**.
-   - e.g. `mahdi@example.com` + a strong password → **Create user** (no need to confirm the email).
+   - e.g. `admin@example.com` + a strong password → **Create user** (no need to confirm the email).
    - e.g. `helia@example.com` + a strong password → **Create user**.
-2. **There is no sign-up screen on purpose.** The app has exactly two users.
+   - Do **not** create the store user yet — the `mahdi` slot stays empty until the store needs its own login.
+2. **There is no sign-up screen on purpose.** The app has exactly these users.
 
 ### 2.4 Give each user a role (required!)
 The app reads the role from `profiles`. Run this in the SQL Editor with the real `user_id`
@@ -60,9 +62,23 @@ values from **Authentication → Users** (the UUID column):
 
 ```sql
 insert into public.profiles (user_id, role) values
-  ('<mahdi-user-uuid>', 'mahdi'),
+  ('<admin-user-uuid>', 'admin'),
   ('<helia-user-uuid>', 'helia')
 on conflict (user_id) do update set role = excluded.role;
+```
+
+Existing database? Run `migrations/007_admin_role.sql` first, then promote the current
+store login (email + password stay the same):
+
+```sql
+update public.profiles set role = 'admin'
+ where user_id = (select id from auth.users where email = '<store email>');
+```
+
+Later, when the store needs its own login: create its Dashboard user, then:
+
+```sql
+insert into public.profiles (user_id, role) values ('<new-store-uuid>', 'mahdi');
 ```
 
 Without this row the user can log in but will see: *"your profile is not registered"*.
@@ -170,7 +186,7 @@ awaiting_snapp ─────► paid       │
 | **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment, shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export, and «ایمپورت لیست پست» (section 8.1). |
 | **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
 | **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, «سهم پیج», «پرداختی به مغازه», top-5 products, cash vs Snapp, post vs courier, discounts by bearer — the same for both partners. |
-| **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications, plus shared «حالت تست (بی‌صدا)» which drops the automatic partner/channel/push notifications while you try features — your own «اعلان آزمایشی» and invoice still work), and the backup reminder. |
+| **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications, plus the admin-only shared «حالت تست (بی‌صدا)» which drops the automatic partner/channel/push notifications while you try features — your own «اعلان آزمایشی» and invoice still work), and the backup reminder. |
 
 **Roles.** Version 2 has no secret numbers any more: both partners see `base`, `hp`, totals,
 `owe` and `h_share`. What the database still enforces through **RLS** (not only the UI): only the
@@ -228,7 +244,8 @@ Requires migration `004_bulk_set_tracking.sql` (section 12). No data ever leaves
 12. **Products are archived, never deleted**, so old orders keep valid product names.
 13. **Pinning, status changes and tracking edits are allowed for both partners** (the spec restricts
     nothing here).
-14. **Users are created manually** in the Supabase dashboard and their `profiles` row is inserted by
+14. **Users are created manually** in the Supabase dashboard (admin + page; the store slot
+    stays empty until needed) and their `profiles` row is inserted by
     hand — the app never signs people up.
 
 ## 9.1 Display names
@@ -392,7 +409,8 @@ Notes:
 2. In the SQL Editor run, **in this order**, the idempotent migrations:
    `migrations/001_security.sql` → `migrations/002_simplify_products.sql` →
    `migrations/003_notifications.sql` → `migrations/004_bulk_set_tracking.sql` →
-   `migrations/005_fix_bulk_set_tracking.sql` → `migrations/006_telegram_pause.sql`.
+   `migrations/005_fix_bulk_set_tracking.sql` → `migrations/006_telegram_pause.sql` →
+   `migrations/007_admin_role.sql`.
    Running one twice changes nothing.
    A fresh database needs none of them: `setup.sql` already contains everything.
    Migration 004 adds the `bulk_set_tracking` RPC (section 8.1); until it is applied the
@@ -400,7 +418,7 @@ Notes:
    Migration 006 adds the shared `telegram_paused` setting («حالت تست»); until it is
    applied the toggle reports an error and notifications behave as before (live).
 3. Supabase Dashboard → **Authentication → Providers → Email** → turn **OFF** «Allow new users to
-   sign up» (the app has exactly two users, section 5.4 of the spec).
+   sign up» (the app has only its hand-created users, section 5.4 of the spec).
 4. Set the secrets (10.2), deploy the four functions (10.3, 10.6, 10.7), register the Telegram
    webhook (10.6) and fill `app_private.config` (10.4).
 5. Push the new frontend files — GitHub Pages republishes itself on every push.

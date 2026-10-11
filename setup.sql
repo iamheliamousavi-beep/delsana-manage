@@ -61,7 +61,7 @@ $$;
 
 create table if not exists public.profiles (
   user_id    uuid primary key references auth.users(id) on delete cascade,
-  role       text not null check (role in ('mahdi', 'helia')),
+  role       text not null check (role in ('mahdi', 'helia', 'admin')),
   created_at timestamptz not null default now()
 );
 
@@ -74,8 +74,22 @@ stable
 security definer
 set search_path = public
 as $$
+  -- the admin inherits every shop power (migration 007)
   select exists (
-    select 1 from public.profiles where user_id = auth.uid() and role = 'mahdi'
+    select 1 from public.profiles where user_id = auth.uid() and role in ('mahdi', 'admin')
+  );
+$$;
+
+-- Admin-only controls (the test-mode switch). The store never has this.
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles where user_id = auth.uid() and role = 'admin'
   );
 $$;
 
@@ -106,7 +120,7 @@ $$;
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles
   for select to authenticated
-  using (user_id = auth.uid() or public.is_mahdi());
+  using (user_id = auth.uid() or public.is_mahdi() or public.is_admin());
 
 -- --------------------------------------------------------------------------
 -- products (readable by both partners, written only through RPCs)
@@ -161,7 +175,8 @@ create policy settings_update on public.settings
   with check (public.is_member() and (
     (key = 'snapp_multiplier' and value ~ '^[0-9]+(\.[0-9]+)?$') or
     (key in ('post_fee', 'rounding_step') and value ~ '^[0-9]+$') or
-    (key = 'telegram_paused' and value in ('0', '1'))));
+    -- the test-mode switch is admin-only (migration 007)
+    (key = 'telegram_paused' and value in ('0', '1') and public.is_admin())));
 
 -- --------------------------------------------------------------------------
 -- orders (both partners read; writes only through RPCs)
@@ -1054,7 +1069,7 @@ begin
       from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'public'
-       and p.proname in ('is_member','is_mahdi','my_role',
+       and p.proname in ('is_member','is_mahdi','is_admin','my_role',
                          'add_product','update_product','set_hp',
                          'set_base_price','set_availability','bulk_price_update',
                          'create_order','set_order_status','cancel_order',
@@ -1084,16 +1099,25 @@ exception when others then
 end $$;
 
 -- ==========================================================================
---  Creating the two users
+--  Creating the users (admin + page now, store later)
 -- ==========================================================================
 -- 1) Supabase Dashboard -> Authentication -> Users -> "Add user"
---    (email + password, "Auto confirm user" = ON). Create exactly two users.
+--    (email + password, "Auto confirm user" = ON). Create two users: the
+--    admin (the human behind the former store login — same email/password)
+--    and the page. The store slot stays EMPTY for now (no credentials).
 -- 2) Then insert their profile rows (replace the UUIDs):
 --
 -- insert into public.profiles (user_id, role) values
---   ('<uuid of mahdi>', 'mahdi'),
+--   ('<uuid of admin>', 'admin'),
 --   ('<uuid of helia>', 'helia')
 -- on conflict (user_id) do update set role = excluded.role;
+--
+-- Existing database? Run migrations/007_admin_role.sql first, then promote:
+--   update public.profiles set role = 'admin'
+--    where user_id = (select id from auth.users where email = '<store email>');
+-- Later, when the store needs its own login: create its Dashboard user, then:
+--   insert into public.profiles (user_id, role)
+--   values ('<new store user uuid>', 'mahdi');
 --
 -- 3) IMPORTANT: Supabase Dashboard -> Authentication -> Sign In / Providers
 --    -> turn OFF "Allow new users to sign up".  The anon key is public and

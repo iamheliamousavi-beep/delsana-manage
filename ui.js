@@ -359,9 +359,9 @@
     });
   }
 
-  /* Display names only — the internal identities (roles `mahdi` / `helia`,
-     RPC names, keys) never change. */
-  var PARTY_LABEL = { mahdi: 'مغازه', helia: 'پیج' };
+  /* Display names only — the internal identities (roles `mahdi` / `helia` /
+     `admin`, RPC names, keys) never change. */
+  var PARTY_LABEL = { mahdi: 'مغازه', helia: 'پیج', admin: 'ادمین' };
   function partyLabel(role) { return PARTY_LABEL[role] || role; }
 
   var BEARER_LABEL = { helia: 'پیج', mahdi: 'مغازه', split: 'نصف‌نصف' };

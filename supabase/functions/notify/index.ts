@@ -22,7 +22,7 @@ import {
 import { pushEnabled, PushError, sendPush, type Subscription } from '../_shared/push.ts';
 
 type Row = F.OutboxRow & { attempts: number; processed_at: string | null };
-type Profile = { user_id: string; role: 'mahdi' | 'helia' };
+type Profile = { user_id: string; role: 'mahdi' | 'helia' | 'admin' };
 type OrderRow = F.Order & {
   tg_channel_msg_id: number | null;
   tg_channel_hash: string | null;
@@ -141,16 +141,17 @@ async function loadProfiles(admin: Admin): Promise<Profile[]> {
 }
 
 /**
- * 8.1: the actor is never notified; product events reach the page; events
- * without an actor reach both partners.
+ * 8.1: the actor is never notified; product events reach every partner
+ * (admin, page and store — migration 007); events without an actor
+ * reach both partners.
  */
 function recipientsFor(m: F.Merged, profiles: Profile[]): Profile[] {
-  if (m.isProductEvent) return profiles.filter((p) => p.role === 'helia');
+  if (m.isProductEvent) return profiles;
   if (m.actors.length === 0) return profiles;
   return profiles.filter((p) => !m.actors.includes(p.user_id));
 }
 
-function actorRole(m: F.Merged, profiles: Profile[]): 'mahdi' | 'helia' | null {
+function actorRole(m: F.Merged, profiles: Profile[]): 'mahdi' | 'helia' | 'admin' | null {
   const actor = m.actors[0];
   if (!actor) return null;
   return profiles.find((p) => p.user_id === actor)?.role ?? null;
@@ -248,7 +249,7 @@ async function deliverPush(
   order: OrderRow | null,
   m: F.Merged,
   base: string,
-  role: 'mahdi' | 'helia' | null,
+  role: 'mahdi' | 'helia' | 'admin' | null,
 ): Promise<void> {
   const { data, error } = await admin
     .from('push_subscriptions')

@@ -10,6 +10,7 @@
     profile: null,
     role: null,
     isMahdi: false,
+    isAdmin: false,
     settings: { post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000, telegram_paused: false },
     products: [],
     orders: [],
@@ -92,7 +93,7 @@
 
   DB.signOut = async function () {
     try { await App.supabase.auth.signOut(); } catch (e) { /* already signed out */ }
-    App.user = null; App.profile = null; App.role = null; App.isMahdi = false;
+    App.user = null; App.profile = null; App.role = null; App.isMahdi = false; App.isAdmin = false;
     App.products = []; App.orders = [];
   };
 
@@ -104,7 +105,9 @@
     );
     App.profile = rows && rows[0] ? rows[0] : null;
     App.role = App.profile ? App.profile.role : null;
-    App.isMahdi = App.role === 'mahdi';
+    /* the admin inherits every shop power (migration 007) */
+    App.isAdmin = App.role === 'admin';
+    App.isMahdi = App.role === 'mahdi' || App.isAdmin;
     return App.profile;
   };
 

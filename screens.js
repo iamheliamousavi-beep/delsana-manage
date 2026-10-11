@@ -2451,7 +2451,8 @@ var Screens = (function () {
             class: 'btn', id: 'tg-disconnect', type: 'button', text: 'قطع اتصال',
             onclick: disconnectTelegram
           }))),
-      el('div', { class: 'field' },
+      /* 007: the test-mode switch is admin-only — hidden from everyone else */
+      el('div', { class: 'field', id: 'tg-pause-field', hidden: !App.isAdmin },
         el('label', { text: 'حالت تست (بی‌صدا)' }),
         el('p', { class: 'hint', id: 'tg-pause-status', text: '…' }),
         el('div', { class: 'row wrap', style: 'margin-top:6px' },
@@ -2578,6 +2579,8 @@ var Screens = (function () {
   }
 
   async function toggleTelegramPaused() {
+    /* client-side gate (the server enforces it too via RLS, migration 007) */
+    if (!App.isAdmin) { UI.toast('این گزینه فقط برای ادمین است', 'warn'); return; }
     var paused = isTelegramPaused();
     if (!paused) {
       var yes = await UI.confirm(

@@ -328,7 +328,7 @@ export function buildPush(
   order: Order | null,
   m: Merged,
   baseUrl: string,
-  actorRole: 'mahdi' | 'helia' | null = null,
+  actorRole: 'mahdi' | 'helia' | 'admin' | null = null,
 ): PushMessage {
   const customer = order?.customer ?? '';
   const orderId = order?.id ?? null;
@@ -337,7 +337,11 @@ export function buildPush(
   let body = '';
 
   if (m.has('order_created')) {
-    title = actorRole === 'helia' ? 'سفارش جدید از پیج' : 'سفارش جدید از مغازه';
+    title = actorRole === 'helia'
+      ? 'سفارش جدید از پیج'
+      : actorRole === 'admin'
+        ? 'سفارش جدید از ادمین'
+        : 'سفارش جدید از مغازه';
     body = customer;
   } else if (m.statusTo === 'cancelled') {
     title = 'سفارش لغو شد';

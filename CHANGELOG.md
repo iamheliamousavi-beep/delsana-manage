@@ -3,6 +3,19 @@
 Notable changes to **Delsana Management**. Version 2 implements the master prompt
 (`delsana-master-prompt.md`); older history is listed at the end.
 
+## Unreleased — admin role («ادمین»)
+
+- New `admin` role: the current store login is promoted (email/password unchanged),
+  with full access; the `mahdi` store slot stays empty until it gets credentials.
+  Displayed as «ادمین» (`PARTY_LABEL`).
+- `is_mahdi()` covers the admin everywhere the store has powers; new `is_admin()`
+  gates admin-only controls. Migration `007_admin_role.sql` mirrored into `setup.sql`.
+- The «حالت تست (بی‌صدا)» switch is admin-only: hidden in Settings for other users
+  and enforced server-side (`settings_update` requires `is_admin()` for
+  `telegram_paused`).
+- Product-event notifications (price/availability) now reach every partner — admin,
+  page and store; order-created push titles name the sender («از ادمین»).
+
 ## Unreleased — test mode («حالت تست»)
 
 - Shared «حالت تست (بی‌صدا)» toggle in Settings → «اعلان‌ها»: while on, the `notify`

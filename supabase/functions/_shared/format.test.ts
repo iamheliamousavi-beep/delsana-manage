@@ -210,6 +210,16 @@ Deno.test('8.4 push payload is lock-screen safe', () => {
   const push = buildPush(order, created, 'https://example.app', 'helia');
   assertEquals(push.title, 'سفارش جدید از پیج', 'the title names the sender');
   assertEquals(push.body, 'مشتری تست', 'the body is only the customer name');
+  assertEquals(
+    buildPush(order, created, 'https://example.app', 'admin').title,
+    'سفارش جدید از ادمین',
+    'an admin-created order names the admin',
+  );
+  assertEquals(
+    buildPush(order, created, 'https://example.app', 'mahdi').title,
+    'سفارش جدید از مغازه',
+    'a store-created order names the store',
+  );
   assertEquals(push.tag, 'ord-1:order_created', 'tag = order_id:kind');
   assertEquals(push.url, 'https://example.app/?view=orders&order=ord-1', 'deep link');
 
