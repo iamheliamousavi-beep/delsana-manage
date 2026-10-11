@@ -22,6 +22,13 @@ Notable changes to **Delsana Management**. Version 2 implements the master promp
 - Channel text is now customer, Jalali date, tracking code and `وضعیت: …` (no header line);
   every status change edits the post so the status line stays current. Redeploy `notify`.
 
+## Unreleased — no-reinstall updates on iPhone
+
+- Service-worker cache `delsana-v11`; the app forces an update check on every launch
+  (`registration.update()`) and shows a «نسخه جدید آماده است» banner with a one-tap
+  «اعمال به‌روزرسانی» reload when a new deploy takes control. Never delete/reinstall
+  the Home Screen app — tapping the banner is enough.
+
 ## Version 2 — 2026-10-09
 
 ### Phase 9 — post-office list import

@@ -994,3 +994,33 @@ table.data tr:last-child td { border-bottom: 0; }
 @media print {
   .tabbar, .topbar, .toasts { display: none !important; }
 }
+
+/* ------------------------------------------------------- update banner ---- */
+/* A new deploy took control of the page: one tap reloads into it. Never
+   delete/reinstall the Home Screen app — tapping this button is enough. */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 120;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 700;
+  font-size: .9rem;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .3);
+}
+.update-banner button {
+  background: #fff;
+  color: var(--brand-strong);
+  border: 0;
+  border-radius: 10px;
+  padding: 7px 16px;
+  font-weight: 700;
+  font-size: .88rem;
+}

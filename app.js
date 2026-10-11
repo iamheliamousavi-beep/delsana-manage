@@ -314,11 +314,59 @@ const CONFIG = {
   }
 
   /* ------------------------------------------------------------------ sw */
+  /* Update flow (no reinstall ever): the worker is cache-first for static
+     files, so every launch asks the server for a new sw.js; when an update
+     takes control a banner offers a one-tap reload. Never reload silently —
+     the user may be mid-form. iOS standalone note: tapping the button is
+     enough, the app must NOT be deleted. */
+  var updateBannerShown = false;
+  var hadControllerAtBoot = false;
+  try { hadControllerAtBoot = !!(navigator.serviceWorker && navigator.serviceWorker.controller); }
+  catch (e) { /* not supported */ }
+
+  function showUpdateBanner() {
+    if (updateBannerShown) return;
+    updateBannerShown = true;
+    var bar = document.createElement('div');
+    bar.className = 'update-banner';
+    bar.setAttribute('role', 'status');
+    var label = document.createElement('span');
+    label.textContent = 'نسخه جدید آماده است';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'اعمال به‌روزرسانی';
+    btn.addEventListener('click', function () { window.location.reload(); });
+    bar.appendChild(label);
+    bar.appendChild(btn);
+    document.body.insertBefore(bar, document.body.firstChild);
+  }
+
   function registerSW() {
     if (!('serviceWorker' in navigator)) return;
     if (location.protocol !== 'https:' && location.hostname !== 'localhost' &&
         location.hostname !== '127.0.0.1') return;
-    navigator.serviceWorker.register('sw.js').catch(function () { /* not fatal */ });
+    try {
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        /* first install also fires this (null -> worker): that is not an update */
+        if (!hadControllerAtBoot) { hadControllerAtBoot = true; return; }
+        showUpdateBanner();
+      });
+    } catch (e) { /* not supported */ }
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      /* iOS does not always check alone: force it on every launch */
+      try { if (reg && reg.update) reg.update().catch(function () { /* offline */ }); }
+      catch (e) { /* noop */ }
+      try {
+        if (reg && reg.waiting && navigator.serviceWorker.controller) showUpdateBanner();
+        if (reg) reg.addEventListener('updatefound', function () {
+          var w = reg.installing;
+          if (!w) return;
+          w.addEventListener('statechange', function () {
+            if (w.state === 'installed' && navigator.serviceWorker.controller) showUpdateBanner();
+          });
+        });
+      } catch (e) { /* noop */ }
+    }).catch(function () { /* not fatal */ });
   }
 
   /* ------------------------------------------------------------ theme/zoom */
