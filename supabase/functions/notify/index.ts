@@ -141,12 +141,11 @@ async function loadProfiles(admin: Admin): Promise<Profile[]> {
 }
 
 /**
- * 8.1: the actor is never notified; product events reach every partner
- * (admin, page and store — migration 007); events without an actor
- * reach both partners.
+ * 8.1: the actor is never notified. Product events reach every partner
+ * except the actor (admin, page and store — migration 007); events
+ * without an actor reach everyone.
  */
 function recipientsFor(m: F.Merged, profiles: Profile[]): Profile[] {
-  if (m.isProductEvent) return profiles;
   if (m.actors.length === 0) return profiles;
   return profiles.filter((p) => !m.actors.includes(p.user_id));
 }

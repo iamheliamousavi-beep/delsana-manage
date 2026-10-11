@@ -15,6 +15,7 @@ Notable changes to **Delsana Management**. Version 2 implements the master promp
   `telegram_paused`).
 - Product-event notifications (price/availability) now reach every partner — admin,
   page and store; order-created push titles name the sender («از ادمین»).
+  The actor is still never notified of their own change (8.1).
 
 ## Unreleased — test mode («حالت تست»)
 
