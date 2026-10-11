@@ -1271,8 +1271,10 @@ var Screens = (function () {
     await UI.withBusy(btn, async function () {
       try {
         var res = await DB.sendInvoice(o.id);
-        if (res && res.ok === false && res.reason === 'not_connected') {
-          UI.toast('ابتدا تلگرام را در تنظیمات وصل کنید', 'warn', 4000);
+        if (res && res.ok === false) {
+          UI.toast(res.reason === 'not_connected'
+            ? 'ابتدا تلگرام را در تنظیمات وصل کنید'
+            : 'فاکتور ارسال نشد؛ فهرست سفارش‌ها را به‌روزرسانی کنید', 'warn', 4000);
           return;
         }
         UI.toast('فاکتور به تلگرام شما ارسال شد', 'ok');

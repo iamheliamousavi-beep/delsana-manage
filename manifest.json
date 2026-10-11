@@ -18,7 +18,7 @@
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "سفارش جدید", "short_name": "جدید", "url": "./index.html#neworder" },
-    { "name": "حساب‌ها", "short_name": "حساب‌ها", "url": "./index.html#accounts" }
+    { "name": "سفارش جدید", "short_name": "جدید", "url": "./index.html?view=neworder" },
+    { "name": "حساب‌ها", "short_name": "حساب‌ها", "url": "./index.html?view=accounts" }
   ]
 }

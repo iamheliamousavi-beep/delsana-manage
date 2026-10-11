@@ -16,6 +16,8 @@ Notable changes to **Delsana Management**. Version 2 implements the master promp
 - Product-event notifications (price/availability) now reach every partner — admin,
   page and store; order-created push titles name the sender («از ادمین»).
   The actor is still never notified of their own change (8.1).
+- Invoice button no longer reports success when the order is gone; manifest
+  shortcuts use real `?view=` deep links. Service-worker cache `delsana-v12`.
 
 ## Unreleased — test mode («حالت تست»)
 
