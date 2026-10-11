@@ -992,6 +992,11 @@ var Screens = (function () {
       el('h2', { text: 'سفارش‌ها' }),
       el('span', { class: 'spacer' }),
       el('button', {
+        class: 'btn small', type: 'button', text: 'ایمپورت لیست پست',
+        title: 'خواندن بارکدها از فایل PDF اداره پست و ثبت گروهی کد رهگیری',
+        onclick: function () { openPostImport(); }
+      }),
+      el('button', {
         class: 'btn small', type: 'button', text: 'خروجی CSV',
         title: 'خروجی اکسل (فارسی)، شامل همه سفارش‌ها',
         onclick: exportCSV
@@ -1364,6 +1369,477 @@ var Screens = (function () {
     });
     UI.downloadCSV('delsana-orders-' + UI.toLocalInputDate(new Date()) + '.csv', rows);
     UI.toast('خروجی CSV دانلود شد', 'ok');
+  }
+
+  /* ========================================================== post import */
+  /* «ایمپورت لیست پست» (post-import-prompt.md): upload postal PDF(s), the
+     browser reads the 24-digit barcodes (pdf.js is lazy-loaded), matches
+     each row to a post order by name + city (postimport.js, pure), shows a
+     review table, and only the final button writes — chunked calls to the
+     bulk_set_tracking RPC (migration 004). Nothing leaves the device until
+     then; closing the modal discards everything. */
+
+  var PDFJS_SRC = 'lib/pdfjs/pdf.min.js';
+  var PDFJS_WORKER = 'lib/pdfjs/pdf.worker.min.js';
+  var pdfJsPromise = null;
+  var PI_CHUNK = 200;   /* RPC hard limit */
+
+  var PI_SKIP_LABEL = {
+    not_found: 'سفارش پیدا نشد',
+    cancelled: 'سفارش لغو شده است',
+    code_in_use: 'این کد روی سفارش دیگری ثبت است',
+    has_code: 'سفارش از قبل کد دارد'
+  };
+
+  function loadPdfJs() {
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+      return Promise.resolve(window.pdfjsLib);
+    }
+    if (pdfJsPromise) return pdfJsPromise;
+    pdfJsPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = PDFJS_SRC;
+      s.async = true;
+      s.onload = function () {
+        if (!window.pdfjsLib) {
+          pdfJsPromise = null;
+          reject(new Error('کتابخانه خواندن PDF بارگذاری نشد'));
+          return;
+        }
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+        resolve(window.pdfjsLib);
+      };
+      s.onerror = function () {
+        pdfJsPromise = null;
+        reject(new Error('کتابخانه خواندن PDF بارگذاری نشد؛ اینترنت را بررسی کنید'));
+      };
+      document.head.appendChild(s);
+    });
+    return pdfJsPromise;
+  }
+
+  function pdfErrorText(e, fileName) {
+    var name = (e && e.name) || '';
+    if (name.indexOf('PasswordException') !== -1) {
+      return 'فایل «' + fileName + '» رمز دارد و قابل خواندن نیست';
+    }
+    if (name.indexOf('InvalidPDFException') !== -1 || name.indexOf('ResponseException') !== -1) {
+      return 'فایل «' + fileName + '» یک PDF معتبر نیست';
+    }
+    return 'خواندن فایل «' + fileName + '» ممکن نشد: ' + UI.errMessage(e);
+  }
+
+  async function readPdfPages(file) {
+    var buf = await file.arrayBuffer();
+    var pdf = await window.pdfjsLib.getDocument({ data: buf }).promise;
+    var pages = [];
+    try {
+      for (var p = 1; p <= pdf.numPages; p++) {
+        var page = await pdf.getPage(p);
+        var tc = await page.getTextContent();
+        pages.push(tc.items);
+      }
+    } finally {
+      try { pdf.destroy(); } catch (e) { /* already closed */ }
+    }
+    return pages;
+  }
+
+  function findOrder(id) {
+    for (var i = 0; i < App.orders.length; i++) {
+      if (App.orders[i].id === id) return App.orders[i];
+    }
+    return null;
+  }
+
+  function shortAddr(o) {
+    var a = String(o.address || '').split('،').slice(0, 2).join('،').trim();
+    return a || o.customer;
+  }
+
+  function copyText(t) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(t).then(function () {
+        UI.toast('کد کپی شد', 'ok', 1400);
+      }).catch(function () { legacyCopy(t); });
+    }
+    legacyCopy(t);
+    return Promise.resolve();
+  }
+  function legacyCopy(t) {
+    var ta = el('textarea', { value: t, style: 'position:fixed;opacity:0' });
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); UI.toast('کد کپی شد', 'ok', 1400); } catch (e) { /* ignore */ }
+    ta.remove();
+  }
+
+  function openPostImport() {
+    if (!App.online) {
+      UI.toast('آفلاین هستید؛ برای ایمپورت ابتدا اتصال را برقرار کنید', 'warn', 4000);
+      return;
+    }
+
+    var st = { entries: [], notices: [], skipped: [], seenBarcodes: {} };
+
+    var fileInput = el('input', {
+      type: 'file', accept: 'application/pdf,.pdf', multiple: true,
+      'aria-label': 'فایل PDF لیست پست',
+      onchange: function (e) { onFiles(e.target.files); }
+    });
+    var statusEl = el('p', { class: 'hint', text: 'فایل‌ها فقط روی همین دستگاه خوانده می‌شوند؛ چیزی آپلود نمی‌شود.' });
+    var reviewHost = el('div', {});
+    var countsEl = el('p', { class: 'hint pi-counts' });
+    var dupMsgEl = el('p', { class: 'alert danger', hidden: true });
+    var markShipped = el('input', { type: 'checkbox' });
+    var submitBtn = el('button', { class: 'btn primary', type: 'button', text: 'ثبت کدهای انتخاب‌شده' });
+
+    submitBtn.addEventListener('click', function () { submit(st, markShipped.checked, submitBtn); });
+
+    var body = el('div', {},
+      el('div', { class: 'field' },
+        el('label', { text: 'فایل PDF لیست پست (چند فایل مجاز)' }),
+        fileInput),
+      statusEl,
+      reviewHost,
+      el('div', { class: 'pi-footer' },
+        countsEl,
+        dupMsgEl,
+        el('label', { class: 'check' }, markShipped,
+          el('span', { text: 'همزمان وضعیت سفارش‌های «آماده ارسال» را «ارسال‌شده» کن' })),
+        submitBtn));
+
+    UI.modal({
+      title: 'ایمپورت لیست پست',
+      body: body,
+      cls: 'wide',
+      dismissible: true,
+      actions: [{ label: 'بستن', value: null }]
+    }).then(function () {
+      /* closing the modal discards everything — no state survives */
+    });
+
+    function render() {
+      renderReview();
+      refreshFooter();
+    }
+
+    function renderReview() {
+      reviewHost.innerHTML = '';
+      if (!st.entries.length && !st.skipped.length && !st.notices.length) return;
+
+      st.notices.forEach(function (n) {
+        reviewHost.appendChild(el('p', { class: 'alert warn', text: n }));
+      });
+      st.skipped.forEach(function (s) {
+        reviewHost.appendChild(el('p', { class: 'alert danger',
+          text: 'ردیف خوانده نشد — ' + s.reason + ': ' + s.raw }));
+      });
+      if (!st.entries.length) return;
+
+      var table = el('table', { class: 'pi-table' },
+        el('thead', {}, el('tr', {},
+          el('th', { text: 'بارکد' }),
+          el('th', { text: 'اطلاعات پی‌دی‌اف' }),
+          el('th', { text: 'سفارش' }),
+          el('th', { text: 'وضعیت تطبیق' }),
+          el('th', { text: 'ثبت' }))));
+      var tbody = el('tbody', {});
+      st.entries.forEach(function (entry, idx) { tbody.appendChild(entryRow(entry, idx)); });
+      table.appendChild(tbody);
+      reviewHost.appendChild(table);
+    }
+
+    function entryRow(entry, idx) {
+      var tr = el('tr', { dataset: { piIdx: String(idx) } });
+
+      var code = el('code', { class: 'pi-code', dir: 'ltr', text: entry.barcode,
+        title: 'برای کپی کلیک کنید',
+        onclick: function () { copyText(entry.barcode); } });
+      tr.appendChild(el('td', {}, code));
+
+      var info = el('div', { class: 'pi-info' },
+        el('div', { text: (entry.recipient || '—') + (entry.city ? ' — ' + entry.city : '') }),
+        entry.weight ? el('div', { class: 'muted', text: 'وزن: ' + UI.toFaDigits(entry.weight) + ' گرم' }) : null);
+      tr.appendChild(el('td', {}, info));
+
+      /* the select: top-5 candidates first, then every non-cancelled post order */
+      var select = el('select', { 'aria-label': 'انتخاب سفارش برای این کد' });
+      select.appendChild(el('option', { value: '', text: 'هیچ‌کدام / نادیده بگیر' }));
+      var chosen = {};
+      if (entry.candidates.length) {
+        var g1 = el('optgroup', { label: 'پیشنهادها' });
+        entry.candidates.forEach(function (c) {
+          chosen[c.order_id] = true;
+          g1.appendChild(el('option', { value: c.order_id,
+            text: c.customer + ' — ' + shortAddr(c) + ' — ' + UI.statusLabel(c.status) +
+                  ' — ' + UI.fmtDate(c.created_at) }));
+        });
+        select.appendChild(g1);
+      }
+      var rest = App.orders.filter(function (o) {
+        return o.shipping_method === 'post' && o.status !== 'cancelled' && !chosen[o.id];
+      }).sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+      if (rest.length) {
+        var g2 = el('optgroup', { label: 'بقیه سفارش‌های پست' });
+        rest.forEach(function (o) {
+          g2.appendChild(el('option', { value: o.id,
+            text: o.customer + ' — ' + shortAddr(o) + ' — ' + UI.statusLabel(o.status) +
+                  ' — ' + UI.fmtDate(o.created_at) }));
+        });
+        select.appendChild(g2);
+      }
+      select.value = entry.orderId || '';
+      select.addEventListener('change', function () {
+        entry.orderId = select.value;
+        if (entry.orderId) entry.checked = true;
+        else entry.checked = false;
+        repaintRow(entry, idx);
+        refreshFooter();
+      });
+      tr.appendChild(el('td', {}, select));
+
+      var chipHost = el('td', { class: 'pi-verdict' });
+      tr.appendChild(chipHost);
+
+      var check = el('input', { type: 'checkbox', 'aria-label': 'ثبت این کد' });
+      check.checked = !!entry.checked;
+      check.addEventListener('change', function () {
+        entry.checked = check.checked;
+        refreshFooter();
+      });
+      tr.appendChild(el('td', {}, el('label', { class: 'check' }, check)));
+
+      var warnHost = el('td', { class: 'pi-warn', colspan: 5 });
+      tr.appendChild(warnHost);
+
+      entry._dom = { select: select, check: check, chipHost: chipHost, warnHost: warnHost, tr: tr };
+      repaintRow(entry, idx);
+      return tr;
+    }
+
+    /* chip + warnings for one row; `blocked` unchecks and disables */
+    function repaintRow(entry, idx) {
+      var d = entry._dom;
+      if (!d) return;
+      var vClass = entry.verdict === 'green' ? 'pi-g' :
+                   entry.verdict === 'yellow' ? 'pi-y' : 'pi-r';
+      var vText = entry.verdict === 'green' ? 'سبز — دقیق' :
+                  entry.verdict === 'yellow' ? 'زرد — بررسی کن' : 'قرمز — بدون کاندیدا';
+      d.chipHost.innerHTML = '';
+      d.chipHost.appendChild(el('span', { class: 'pill ' + vClass, text: vText }));
+
+      var warnings = (entry.parseWarnings || []).slice();
+      var blocked = false;
+      var order = entry.orderId ? findOrder(entry.orderId) : null;
+
+      if (order && order.tracking && order.tracking !== entry.barcode) {
+        warnings.push('این سفارش از قبل کد «' + order.tracking + '» دارد');
+      }
+      var elsewhere = App.orders.some(function (o) {
+        return o.tracking === entry.barcode && o.id !== entry.orderId;
+      });
+      if (elsewhere) {
+        warnings.push('این کد روی سفارش دیگری ثبت شده است؛ این ردیف ثبت نمی‌شود');
+        blocked = true;
+      }
+      entry.blocked = blocked;
+
+      d.warnHost.innerHTML = '';
+      warnings.forEach(function (w) {
+        d.warnHost.appendChild(el('div', { class: 'pi-warn-line', text: '⚠ ' + w }));
+      });
+
+      /* explicit «جایگزین شود» toggle when the chosen order already has code */
+      if (order && order.tracking && order.tracking !== entry.barcode) {
+        var ow = el('input', { type: 'checkbox', 'aria-label': 'جایگزینی کد قبلی' });
+        ow.checked = !!entry.overwrite;
+        ow.addEventListener('change', function () { entry.overwrite = ow.checked; refreshFooter(); });
+        d.warnHost.appendChild(el('label', { class: 'check pi-ow' }, ow,
+          el('span', { text: 'جایگزین شود (کد قبلی سفارش پاک می‌شود)' })));
+      }
+
+      if (blocked) {
+        entry.checked = false;
+        d.check.checked = false;
+      }
+      d.check.disabled = blocked;
+      d.select.disabled = false;
+      d.tr.classList.toggle('pi-blocked', blocked);
+      d.tr.classList.toggle('pi-dup', !!entry.dupOrder);
+      if (idx !== undefined && entry.dupOrder) {
+        d.warnHost.appendChild(el('div', {
+          class: 'pi-warn-line',
+          text: '⚠ این سفارش در چند ردیف انتخاب شده است؛ فقط در یک ردیف ثبت شود'
+        }));
+      }
+    }
+
+    function refreshFooter() {
+      var g = 0, y = 0, r = 0, sel = 0;
+      var byOrder = {};
+      st.entries.forEach(function (e) {
+        if (e.verdict === 'green') g++;
+        else if (e.verdict === 'yellow') y++;
+        else r++;
+        e.dupOrder = false;
+        if (e.checked && e.orderId) {
+          sel++;
+          if (!byOrder[e.orderId]) byOrder[e.orderId] = [];
+          byOrder[e.orderId].push(e);
+        }
+      });
+      var dups = 0;
+      Object.keys(byOrder).forEach(function (id) {
+        if (byOrder[id].length > 1) {
+          dups++;
+          byOrder[id].forEach(function (e) { e.dupOrder = true; });
+        }
+      });
+      st.entries.forEach(function (e, i) { repaintRow(e, i); });
+
+      countsEl.textContent = st.entries.length
+        ? 'سبز: ' + UI.toFaDigits(g) + ' · زرد: ' + UI.toFaDigits(y) +
+          ' · قرمز: ' + UI.toFaDigits(r) + ' · انتخاب‌شده: ' + UI.toFaDigits(sel)
+        : '';
+      dupMsgEl.hidden = dups === 0;
+      if (dups) {
+        dupMsgEl.textContent = 'برخی سفارش‌ها در چند ردیف انتخاب شده‌اند؛ تا رفع تداخل ثبت نمی‌شود.';
+      }
+      submitBtn.disabled = sel === 0 || dups > 0 || !App.online;
+      submitBtn.textContent = sel > 0
+        ? 'ثبت ' + UI.toFaDigits(sel) + ' کد انتخاب‌شده'
+        : 'ثبت کدهای انتخاب‌شده';
+    }
+
+    async function onFiles(files) {
+      var list = Array.prototype.slice.call(files || []);
+      if (!list.length) return;
+      statusEl.textContent = 'در حال بارگذاری pdf.js…';
+      try { await loadPdfJs(); }
+      catch (e) { statusEl.textContent = ''; UI.toast(UI.errMessage(e), 'err'); return; }
+
+      var startIdx = st.entries.length;   /* later batches never re-match old rows */
+      for (var fi = 0; fi < list.length; fi++) {
+        var file = list[fi];
+        statusEl.textContent = 'در حال خواندن «' + file.name + '»…';
+        var pages;
+        try {
+          pages = await readPdfPages(file);
+        } catch (e) {
+          st.notices.push(pdfErrorText(e, file.name));
+          continue;
+        }
+        var parsed = window.PostImport.parseItems(pages);
+        parsed.skipped.forEach(function (s) { st.skipped.push(s); });
+        if (!parsed.rows.length) {
+          st.notices.push('در فایل «' + file.name + '» هیچ ردیفی با بارکد پستی پیدا نشد' +
+            (parsed.skipped.length ? '' : ' (فایل اسکن‌شده یا بدون متن است)'));
+          continue;
+        }
+        parsed.rows.forEach(function (r) {
+          if (st.seenBarcodes[r.barcode]) {
+            st.notices.push('کد «' + r.barcode + '» تکراری بود (در «' + file.name +
+              '» هم هست) و نادیده گرفته شد');
+            return;
+          }
+          st.seenBarcodes[r.barcode] = true;
+          st.entries.push({
+            barcode: r.barcode,
+            recipient: r.recipient,
+            city: r.city,
+            weight: r.weight,
+            raw: r.raw,
+            parseWarnings: r.warnings || [],
+            verdict: 'red',
+            candidates: [],
+            orderId: '',
+            checked: false,
+            overwrite: false,
+            blocked: false,
+            dupOrder: false
+          });
+        });
+      }
+
+      /* match only the rows added by this batch, so earlier user edits survive */
+      var added = st.entries.slice(startIdx);
+      var matched = window.PostImport.matchRows(
+        added.map(function (e) {
+          return { barcode: e.barcode, recipient: e.recipient, city: e.city, raw: e.raw, warnings: e.parseWarnings };
+        }),
+        App.orders
+      );
+      matched.forEach(function (m, i) {
+        var e = added[i];
+        e.verdict = m.verdict;
+        e.candidates = m.candidates || [];
+        if (m.verdict === 'green' && e.candidates.length) {
+          e.orderId = e.candidates[0].order_id;
+          e.checked = true;
+        } else if (m.verdict === 'yellow' && e.candidates.length > 1) {
+          /* preselect only when one candidate clearly leads (gap >= 1) */
+          if (e.candidates[0].score - e.candidates[1].score >= 1) {
+            e.orderId = e.candidates[0].order_id;
+          }
+        }
+      });
+
+      statusEl.textContent = st.entries.length
+        ? UI.toFaDigits(st.entries.length) + ' ردیف از ' + UI.toFaDigits(list.length) +
+          ' فایل خوانده شد؛ قبل از ثبت، جدول را بررسی کنید.'
+        : 'هیچ ردیفی با بارکد پستی پیدا نشد.';
+      fileInput.value = '';
+      render();
+    }
+
+    async function submit(state, markShip, btn) {
+      var chosen = state.entries.filter(function (e) { return e.checked && e.orderId && !e.blocked && !e.dupOrder; });
+      if (!chosen.length) {
+        UI.toast('هیچ ردیفی برای ثبت انتخاب نشده است', 'warn');
+        return;
+      }
+      var yes = await UI.confirm(
+        UI.toFaDigits(chosen.length) + ' کد رهگیری ثبت شود؟ تا این لحظه چیزی ذخیره نشده است.',
+        { title: 'ثبت کدهای پستی', okLabel: 'ثبت' });
+      if (!yes) return;
+
+      await UI.withBusy(btn, async function () {
+        try {
+          var plain = [], overwrite = [];
+          chosen.forEach(function (e) {
+            var item = { order_id: e.orderId, tracking: e.barcode };
+            if (e.overwrite) overwrite.push(item); else plain.push(item);
+          });
+          var updated = 0, skipped = [];
+          var groups = [{ items: plain, ow: false }, { items: overwrite, ow: true }];
+          for (var gi = 0; gi < groups.length; gi++) {
+            var g = groups[gi];
+            for (var from = 0; from < g.items.length; from += PI_CHUNK) {
+              var res = await DB.bulkSetTracking(g.items.slice(from, from + PI_CHUNK), {
+                overwrite: g.ow, markShipped: markShip
+              });
+              updated += res.updated || 0;
+              skipped = skipped.concat(res.skipped || []);
+            }
+          }
+          UI.toast(UI.toFaDigits(updated) + ' کد ثبت شد', 'ok', 3000);
+          if (skipped.length) {
+            var lines = skipped.map(function (s) {
+              return (PI_SKIP_LABEL[s.reason] || s.reason) + ' (' + String(s.order_id).slice(0, 8) + '…)';
+            });
+            UI.toast(UI.toFaDigits(skipped.length) + ' ردیف ثبت نشد: ' + lines.join('، '), 'warn', 7000);
+          }
+          await DB.loadOrders();
+          repaintOrders();
+          if (window.App$ && App$.refresh) App$.refresh(false);
+        } catch (e) {
+          showErr(e);
+          throw e;
+        }
+      });
+    }
   }
 
   /* ============================================================= ACCOUNTS */

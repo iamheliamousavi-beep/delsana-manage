@@ -190,7 +190,8 @@
         }));
       });
 
-      var box = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' },
+      var box = el('div', { class: 'modal' + (opts.cls ? ' ' + opts.cls : ''),
+        role: 'dialog', 'aria-modal': 'true' },
         el('h3', { text: opts.title || '' }),
         bodyNode,
         actionRow);

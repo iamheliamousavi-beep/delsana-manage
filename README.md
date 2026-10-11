@@ -19,7 +19,9 @@ Plain HTML/CSS/vanilla JavaScript, no framework, no build step, no `npm`. Backen
 | `db.js` | Supabase data layer (queries + RPC calls) |
 | `calc.js` | Pure money calculations (single source of truth) |
 | `ui.js` | DOM helpers, formatting, toasts, dialogs, validation, CSV |
-| `screens.js` | The six screens (products, new order, orders, accounts, reports, settings) |
+| `screens.js` | The seven screens (products, new order, orders, accounts, reports, settings, post-list import) |
+| `postimport.js` | Pure PDF-text parsing + order matching for the post-list import (section 8.1) |
+| `lib/pdfjs/` | Vendored pdf.js 3.11.174 (`pdf.min.js`, `pdf.worker.min.js`, `LICENSE`) |
 | `setup.sql` | Schema, RLS policies, indexes, triggers and all RPCs |
 | `manifest.json`, `sw.js` | PWA manifest + service worker (offline shell) |
 | `icon.svg`, `icon-192.png`, `icon-512.png` | Icons |
@@ -165,7 +167,7 @@ awaiting_snapp ─────► paid       │
 |-----|--------------|
 | **محصولات** | Live prices (cash + Snapp), availability pill, search, «عدم موجودی» / «موجود شد» (shop only, existing orders untouched), products are archived, never deleted, CSV export. Shop edits name, «قیمت از مغازه» and «سود پیج», adds products and runs a bulk price update (% or fixed) on the shop price. Page edits only «سود پیج». |
 | **سفارش جدید** | Product picker + quantities (an unavailable product blocks the save until it is removed), customer/phone/address/10-digit postal code, shipping, payment, Snapp multiplier override, discount + bearer, live summary. |
-| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment, shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export. |
+| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment, shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export, and «ایمپورت لیست پست» (section 8.1). |
 | **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
 | **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, «سهم پیج», «پرداختی به مغازه», top-5 products, cash vs Snapp, post vs courier, discounts by bearer — the same for both partners. |
 | **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications), and the backup reminder. |
@@ -175,6 +177,25 @@ awaiting_snapp ─────► paid       │
 shop changes product names, `base_price`, availability and archives; only the page changes `hp`;
 every money/status write goes through a `security definer` RPC; and a user without a `profiles`
 row cannot read anything or call any RPC.
+
+### 8.1 Importing a post-office list («ایمپورت لیست پست»)
+
+On the **سفارش‌ها** tab (both partners) the «ایمپورت لیست پست» button opens the import dialog.
+
+1. Choose one or more post-office PDFs (the text layer is required — a photo/scanned PDF
+   yields nothing). pdf.js is served from `lib/pdfjs/`, already in the repo.
+2. Every row with a 24-digit barcode is read (recipient, city, weight) and matched to the
+   post orders: green = clear winner (auto-selected), yellow = ambiguous (pick one of the
+   top-5 candidates), red = no candidate (assign manually from the full list). Reversed
+   visual order and the `لا/ال` letter swap are handled automatically.
+3. Review the table: a row whose order already has a tracking code only overwrites it when
+   its «جایگزین شود» toggle is on (default off); a barcode that already belongs to another
+   order blocks that row. Optionally tick «همزمان وضعیت سفارش‌های "آماده ارسال" را
+   "ارسال‌شده" کن».
+4. «ثبت» writes the codes through `bulk_set_tracking` in 200-row chunks and shows how many
+   were updated / skipped and why. Nothing is written before you press it.
+
+Requires migration `004_bulk_set_tracking.sql` (section 12). No data ever leaves the browser.
 
 ---
 
@@ -370,8 +391,11 @@ Notes:
    in the SQL Editor and save the results — migration 002 drops both tables.
 2. In the SQL Editor run, **in this order**, the three idempotent migrations:
    `migrations/001_security.sql` → `migrations/002_simplify_products.sql` →
-   `migrations/003_notifications.sql`. Running one twice changes nothing.
+   `migrations/003_notifications.sql` → `migrations/004_bulk_set_tracking.sql`.
+   Running one twice changes nothing.
    A fresh database needs none of them: `setup.sql` already contains everything.
+   Migration 004 adds the `bulk_set_tracking` RPC (section 8.1); until it is applied the
+   «ایمپورت لیست پست» button reports a missing-RPC error and changes nothing.
 3. Supabase Dashboard → **Authentication → Providers → Email** → turn **OFF** «Allow new users to
    sign up» (the app has exactly two users, section 5.4 of the spec).
 4. Set the secrets (10.2), deploy the four functions (10.3, 10.6, 10.7), register the Telegram
@@ -386,7 +410,7 @@ Notes:
 
 | Where | What |
 |-------|------|
-| `tests.html` in a browser | 37 checks: every money example of section 2, the rounding regressions, the error case and the number-parsing cases of 5.14. |
+| `tests.html` in a browser | 61 checks: every money example of section 2, the rounding regressions, the error case and the number-parsing cases of 5.14, plus the PDF parsing and order-matching of the post-list import (section 8.1, invented fixtures). |
 | `deno test supabase/functions/_shared/format.test.ts` | 6 checks for the notification messages: Jalali date for a known Tehran timestamp, channel text (with/without code, cancelled, HTML-escaped name), invoice (`owe` + `h_share`, no cost text), the merge rule, the push payload. |
 | SQL harness (`run.js`) | 329 checks: both installation paths, all grants and RLS, the money invariants and the notification RPCs (development only, not shipped). |
 

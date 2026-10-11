@@ -1,3 +1,9 @@
 .idea/
 .DS_Store
 node_modules/
+
+# Post-import working files: the spec and the two sample PDFs stay on disk only
+# (public repo — the samples contain real names, barcodes and phone numbers)
+post-import-prompt.md
+sample1.pdf
+sample2.pdf

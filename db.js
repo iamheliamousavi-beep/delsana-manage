@@ -242,6 +242,20 @@
     await DB.rpc('set_tracking', { p_order_id: id, p_tracking: tracking });
   };
 
+  /* post-office PDF import (migration 004): many codes in one call.
+     items: [{order_id, tracking}]; opts: {overwrite, markShipped}.
+     Returns {updated, skipped:[{order_id, reason}]} — never throws for a
+     per-order skip, only for validation/auth/network problems. */
+  DB.bulkSetTracking = async function (items, opts) {
+    opts = opts || {};
+    var res = await DB.rpc('bulk_set_tracking', {
+      p_items: items,
+      p_overwrite: !!opts.overwrite,
+      p_mark_shipped: !!opts.markShipped
+    });
+    return res || { updated: 0, skipped: [] };
+  };
+
   /* section 7.1 — customer data only, money is never editable */
   DB.updateOrderInfo = async function (id, data) {
     await DB.rpc('update_order_info', {

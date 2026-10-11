@@ -55,8 +55,18 @@
   <tbody></tbody>
 </table>
 
+<h2>۴) ماژول ایمپورت لیست پست (postimport.js)</h2>
+<p class="inv">همهٔ داده‌ها ساختگی‌اند (نام‌ها، بارکدها و آدرس‌ها غیرواقعی‌اند).</p>
+<table id="postimport">
+  <thead>
+    <tr><th>#</th><th>شرح</th><th>نتیجه</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
 <script src="calc.js"></script>
 <script src="ui.js"></script>
+<script src="postimport.js"></script>
 <script>
 (function () {
   'use strict';
@@ -293,6 +303,233 @@
     addParse('۱۴ش) جداکننده هزارگان در اعشار', '۵٬۰۰۰', 'float', 5000);
     addParse('۱۴ص) خط تیره انتهایی در اعشار', '۵۰۰۰−', 'float', -5000);
     addParse('۱۴ط) فقط علامت منفی در اعشار → null', '-', 'float', null);
+  }
+
+  /* ---------- section ۴: postimport.js (invented fixtures) ------------- */
+  var piBody = document.querySelector('#postimport tbody');
+
+  function addPI(name, fn) {
+    var ok = false, detail = '';
+    try {
+      var r = fn();
+      if (r === true) { ok = true; } else { detail = String(r); }
+    } catch (e) { detail = e.message; }
+    record(name, ok, detail);
+    var tr = document.createElement('tr');
+    var td1 = document.createElement('td'); td1.textContent = String(piBody.rows.length + 1);
+    var td2 = document.createElement('td'); td2.textContent = name;
+    var td3 = document.createElement('td');
+    td3.textContent = ok ? 'PASS' : ('FAIL — ' + detail);
+    td3.className = ok ? 'pass' : 'fail';
+    tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+    piBody.appendChild(tr);
+  }
+
+  if (typeof PostImport === 'undefined') {
+    record('postimport.js بارگذاری شده است', false, 'PostImport تعریف نشده');
+    var piBad = document.createElement('tr');
+    ['—', 'postimport.js بارگذاری شده است', 'FAIL'].forEach(function (t, i) {
+      var td = document.createElement('td');
+      td.textContent = t;
+      if (i === 2) td.className = 'fail';
+      piBad.appendChild(td);
+    });
+    piBody.appendChild(piBad);
+  } else {
+    var PI = PostImport;
+
+    /* --- normalisation --- */
+    addPI('۴٫۱) حروف عربی: ي/ك به فارسی', function () {
+      var got = PI.normalizeText('كتاب يك');
+      return got === 'کتاب یک' ? true : got;
+    });
+    addPI('۴٫۲) ھ و ة و ۀ به ه', function () {
+      var got = PI.normalizeText('مرحبا ة ۀ ھ');
+      return got === 'مرحبا ه ه ه' ? true : got;
+    });
+    addPI('۴٫۳) ارائهٔ نمایشی (NFKC)', function () {
+      var got = PI.normalizeText('ﭘﯾﺷﺗﺎز');   /* ﭘﯾﺷﺗﺎز */
+      return got === 'پیشتد' || got === 'پیش‌تد' || got.indexOf('پی') === 0 ? true : 'got=' + got;
+    });
+    addPI('۴٫۴) کشیده (tatweel) حذف می‌شود', function () {
+      var got = PI.normalizeText('ســـلام');
+      return got === 'سلام' ? true : got;
+    });
+    addPI('۴٫۵) ارقام فارسی و عربی → لاتین', function () {
+      var got = PI.normalizeText('۱۲۳۴' + '٥٦٧٨');
+      return got === '12345678' ? true : got;
+    });
+    addPI('۴٫۶) فاصلهٔ عربی (ZWNJ) حذف می‌شود', function () {
+      var got = PI.normalizeText('می‌شود');
+      return got === 'میشود' ? true : got;
+    });
+    addPI('۴٫۷) canon: جابه‌جایی لا/ال (سالاری ~ ساالری)', function () {
+      return PI.canon('سالاری') === PI.canon('ساالری') ? true : PI.canon('سالاری');
+    });
+    addPI('۴٫۸) canon: فاصلهٔ شهر (رباط کریم ~ رباطکریم)', function () {
+      return PI.canon('رباط کریم') === PI.canon('رباطکریم') ? true : PI.canon('رباط کریم');
+    });
+    addPI('۴٫۹) editDistance پایه', function () {
+      return PI.editDistance('abc', 'abd') === 1 && PI.editDistance('abc', 'abc') === 0 &&
+             PI.editDistance('', 'ab') === 2 ? true : PI.editDistance('abc', 'abd');
+    });
+
+    /* --- parseItems: table with logical (x-ascending) columns --- */
+    function cell(str, x, y) { return { str: str, transform: [1, 0, 0, 1, x, y] }; }
+    var FAKE_BC1 = '111122223333444455556666';   /* invented, 24 digits */
+    var FAKE_BC2 = '999988887777666655554444';
+
+    var tableAsc = [
+      /* header */
+      cell('ردیف', 10, 100), cell('عنوان مرسوله', 40, 100), cell('بارکد', 90, 100),
+      cell('تاریخ ثبت', 150, 100), cell('مقصد', 200, 100), cell('نام ف', 240, 100),
+      cell('نام گ', 270, 100), cell('وزن', 300, 100),
+      /* row */
+      cell('1', 12, 90), cell('بسته', 45, 90), cell(FAKE_BC1, 92, 90),
+      cell('1405/01/01', 152, 90), cell('تهران', 202, 90), cell('دلسانا', 242, 90),
+      cell('رضایی', 272, 90), cell('250', 302, 90),
+      /* totals — must be ignored */
+      cell('0', 12, 80), cell('جمع کل', 92, 80), cell('250', 302, 80)
+    ];
+
+    addPI('۴٫۱۰) parse: جدول منطقی (نام/شهر/بارکد/وزن)', function () {
+      var r = PI.parseItems(tableAsc);
+      if (r.rows.length !== 1) return 'rows=' + r.rows.length;
+      var row = r.rows[0];
+      if (row.barcode !== FAKE_BC1) return 'barcode=' + row.barcode;
+      if (PI.canon(row.recipient) !== PI.canon('رضایی')) return 'recipient=' + row.recipient;
+      if (PI.canon(row.city) !== PI.canon('تهران')) return 'city=' + row.city;
+      if (row.weight !== '250') return 'weight=' + row.weight;
+      return true;
+    });
+    addPI('۴٫۱۱) parse: ردیف جمع کل نادیده گرفته می‌شود', function () {
+      var r = PI.parseItems(tableAsc);
+      return r.rows.every(function (x) { return x.barcode === FAKE_BC1; }) ? true : 'extra rows';
+    });
+
+    /* --- parseItems: visual-order table, labels split across cells --- */
+    var tableDesc = [
+      /* header stored left-to-right but logical order is right-to-left */
+      cell('وزن', 10, 100), cell('گ', 40, 100), cell('نام', 55, 100),
+      cell('مقصد', 90, 100), cell('بارکد', 140, 100), cell('ردیف', 200, 100),
+      /* row */
+      cell('180', 12, 90), cell('محمدی', 57, 90), cell('کرج', 92, 90),
+      cell(FAKE_BC2, 142, 90), cell('1', 202, 90),
+      /* totals, label split across two cells */
+      cell('کل', 135, 80), cell('جمع', 150, 80), cell('0', 202, 80)
+    ];
+
+    addPI('۴٫۱۲) parse: جدول قرینه با هدر تکه‌تکه (نام + گ)', function () {
+      var r = PI.parseItems(tableDesc);
+      if (r.rows.length !== 1) return 'rows=' + r.rows.length;
+      var row = r.rows[0];
+      if (row.barcode !== FAKE_BC2) return 'barcode=' + row.barcode;
+      if (PI.canon(row.recipient) !== PI.canon('محمدی')) return 'recipient=' + row.recipient;
+      if (PI.canon(row.city) !== PI.canon('کرج')) return 'city=' + row.city;
+      if (row.weight !== '180') return 'weight=' + row.weight;
+      return true;
+    });
+
+    /* --- broken barcode is reported, not dropped --- */
+    var tableBroken = tableDesc.concat([
+      cell('120', 12, 70), cell('غلامی', 57, 70), cell('تبریز', 92, 70),
+      cell('12345678901234567890123', 142, 70), cell('2', 202, 70)   /* 23 digits */
+    ]);
+    addPI('۴٫۱۳) parse: بارکد ۲۳رقمی گزارش می‌شود، حذف نمی‌شود', function () {
+      var r = PI.parseItems(tableBroken);
+      if (r.rows.length !== 1) return 'rows=' + r.rows.length;
+      return r.skipped.length === 1 ? true : 'skipped=' + r.skipped.length;
+    });
+
+    /* --- heuristic fallback (no header line) --- */
+    var headerless = [
+      cell(FAKE_BC1, 10, 100), cell('علی‌زاده', 60, 100),
+      cell('تبریز', 90, 100), cell('دلسانا', 120, 100)
+    ];
+    addPI('۴٫۱۴) parse: بدون هدر → حدس + هشدار', function () {
+      var r = PI.parseItems(headerless);
+      if (r.rows.length !== 1) return 'rows=' + r.rows.length;
+      var row = r.rows[0];
+      if (!row.warnings.length) return 'بدون هشدار';
+      if (PI.canon(row.recipient) !== PI.canon('علی‌زاده')) return 'recipient=' + row.recipient;
+      if (PI.canon(row.city) !== PI.canon('تبریز')) return 'city=' + row.city;
+      return true;
+    });
+
+    /* --- multi-page input (array of pages) --- */
+    addPI('۴٫۱۵) parse: ورودی چندصفحه‌ای', function () {
+      var r = PI.parseItems([tableAsc, tableDesc]);
+      return r.rows.length === 2 ? true : 'rows=' + r.rows.length;
+    });
+
+    /* --- matching (all orders invented) --- */
+    var PI_ORDERS = [
+      { id: 'f1', customer: 'زهرا رضایی', address: 'تهران، تهران',
+        shipping_method: 'post', status: 'settled', created_at: '2026-02-01', tracking: '' },
+      { id: 'f2', customer: 'زهرا رضایی', address: 'تهران، شیراز',
+        shipping_method: 'post', status: 'paid', created_at: '2026-02-03', tracking: '' },
+      { id: 'f3', customer: 'حسین کاظمی', address: 'اصفهان، اصفهان',
+        shipping_method: 'post', status: 'settled', created_at: '2026-02-02', tracking: '123' },
+      { id: 'f4', customer: 'مریم محمدی', address: 'کرج، کرج',
+        shipping_method: 'courier', status: 'settled', created_at: '2026-02-01', tracking: '' },
+      { id: 'f5', customer: 'سعید گلی', address: 'شیراز، شیراز',
+        shipping_method: 'post', status: 'cancelled', created_at: '2026-02-01', tracking: '' },
+      { id: 'f6', customer: 'نرگس احمدی', address: 'تبریز، تبریز',
+        shipping_method: 'post', status: 'settled', created_at: '2026-02-04', tracking: '' },
+      { id: 'f7', customer: 'فاطمه سالاری', address: 'کرج، کرج',
+        shipping_method: 'post', status: 'settled', created_at: '2026-02-05', tracking: '' }
+    ];
+
+    addPI('۴٫۱۶) match: دو مشتری هم‌نام → زرد، قدیمی‌تر اول', function () {
+      var m = PI.matchRows([{ barcode: FAKE_BC1, recipient: 'رضایی', city: 'تهران' }], PI_ORDERS)[0];
+      if (m.verdict !== 'yellow') return 'verdict=' + m.verdict;
+      if (m.candidates[0].order_id !== 'f1') return 'top=' + m.candidates[0].order_id;
+      return true;
+    });
+    addPI('۴٫۱۷) match: تک‌کاندیدای دقیق → سبز + کد قبلی لو می‌رود', function () {
+      var m = PI.matchRows([{ barcode: FAKE_BC2, recipient: 'کاظمی', city: 'اصفهان' }], PI_ORDERS)[0];
+      if (m.verdict !== 'green') return 'verdict=' + m.verdict;
+      if (m.candidates[0].order_id !== 'f3') return 'top=' + m.candidates[0].order_id;
+      if (m.candidates[0].tracking !== '123') return 'tracking flag missing';
+      return true;
+    });
+    addPI('۴٫۱۸) match: پیک و لغوشده از استخر حذف می‌شوند', function () {
+      /* فقط نمونهٔ لغوشده f5 نام «گلی» را دارد، ولی در استخر نیست */
+      var m = PI.matchRows([{ barcode: FAKE_BC1, recipient: 'گلی', city: 'کرمان' }], PI_ORDERS)[0];
+      return m.verdict === 'red' && m.candidates.length === 0 ? true : m.verdict;
+    });
+    addPI('۴٫۱۹) match: نام برعکس (ترتیب بصری) هم پیدا می‌شود', function () {
+      var m = PI.matchRows(
+        [{ barcode: FAKE_BC1, recipient: PI.rev('احمدی'), city: 'تبریز' }], PI_ORDERS)[0];
+      return m.verdict === 'green' && m.candidates[0].order_id === 'f6' ? true : m.verdict;
+    });
+    addPI('۴٫۲۰) match: جابه‌جایی لا/ال در نام (ساالری ~ سالاری)', function () {
+      var m = PI.matchRows(
+        [{ barcode: FAKE_BC1, recipient: 'ساالری', city: 'کرج' }], PI_ORDERS)[0];
+      return m.verdict === 'green' && m.candidates[0].order_id === 'f7' ? true : m.verdict;
+    });
+    addPI('۴٫۲۱) match: نام خوانا اما بی‌کاندیدا → قرمز', function () {
+      var m = PI.matchRows([{ barcode: FAKE_BC1, recipient: 'ناموجود', city: 'رشت' }], PI_ORDERS)[0];
+      return m.verdict === 'red' && m.candidates.length === 0 ? true : m.verdict;
+    });
+    addPI('۴٫۲۲) match: نام گیرنده خوانده‌نشده حتی با تطبیق شهر → قرمز (بخش ۸)', function () {
+      /* f1 و f2 هر دو «تهران» هستند ولی نامی برای مقایسه نیست */
+      var m = PI.matchRows([{ barcode: FAKE_BC1, recipient: '', city: 'تهران' }], PI_ORDERS)[0];
+      return m.verdict === 'red' && m.candidates.length === 0 ? true : m.verdict;
+    });
+    addPI('۴٫۲۳) match: سفارش پیک هرگز کاندیدا نمی‌شود', function () {
+      /* مریم/کرج فقطاعاً با f4 (پیک) می‌خورد؛ اگر فیلتر نباشد سبز می‌شد */
+      var m = PI.matchRows([{ barcode: FAKE_BC1, recipient: 'مریم', city: 'کرج' }], PI_ORDERS)[0];
+      var hasCourier = m.candidates.some(function (c) { return c.order_id === 'f4'; });
+      return !hasCourier && m.verdict !== 'green' && m.candidates[0].order_id === 'f7'
+        ? true : m.verdict;
+    });
+    addPI('۴٫۲۴) match: شهر بی‌فاصله (رباطکریم ~ رباط کریم)', function () {
+      var orders = [{ id: 'f8', customer: 'کامران رحیمی', address: 'تهران، رباط کریم',
+        shipping_method: 'post', status: 'settled', created_at: '2026-02-01', tracking: '' }];
+      var m = PI.matchRows([{ barcode: FAKE_BC1, recipient: 'رحیمی', city: 'رباطکریم' }], orders)[0];
+      return m.verdict === 'green' && m.candidates[0].city_score === 2 ? true : m.verdict;
+    });
   }
 
   var box = document.getElementById('summary');

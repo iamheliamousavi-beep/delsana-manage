@@ -5,6 +5,29 @@ Notable changes to **Delsana Management**. Version 2 implements the master promp
 
 ## Version 2 — 2026-10-09
 
+### Phase 9 — post-office list import
+- New orders header button «ایمپورت لیست پست»: upload a post-office PDF (multiple files),
+  pdf.js (`lib/pdfjs/`, vendored 3.11.174) extracts the text layer, `postimport.js` parses the
+  parcels and matches them to post orders by recipient name + city, then a review table lets
+  the user confirm rows before writing.
+- Matching (5.1): pool = `shipping_method='post'` excluding cancelled; name 3 / 2.5 / 2 / 1,
+  city 2 / 1, green when the best total ≥ 4.5 and the gap to the runner-up ≥ 1, yellow ≥ 2
+  (preselected only when clearly best), red otherwise. Reversed (visual-order) names and the
+  `لا/ال` swap are handled; top-5 candidates per row.
+- Review table: verdict chip, per-row order select, checkbox (green pre-checked), warnings,
+  existing-tracking rows behind an off-by-default «جایگزین شود» toggle, blocked duplicate
+  rows, live counts in the footer. Optional «همزمان وضعیت سفارش‌های "آماده ارسال" را
+  "ارسال‌شده" کن» (off by default) plus an opt-in tracking-code copy.
+- Bulk save via the new `bulk_set_tracking(p_items jsonb, p_overwrite boolean,
+  p_mark_shipped boolean)` RPC: UPDATE-only (no INSERT) so the `tracking_changed` outbox
+  rows flow to the notification Edge Functions untouched; validation returns
+  `{"updated":n,"skipped":[{order_id,reason}]}`; called in 200-row chunks. Only database
+  change of this phase — one function, no tables/columns/indexes/RLS.
+- Migration `004_bulk_set_tracking.sql` mirrored into `setup.sql` (grant list included);
+  apply it in the Supabase SQL Editor before pushing (see README §12).
+- `tests.html` section ۴) covers `postimport.js` (normalisation, parse, matching) with
+  invented fixtures; service-worker cache bumped to `delsana-v9` (+`./postimport.js`).
+
 ### Phase 8 — cleanup and documentation
 - `.gitignore` added (`.idea/`, `.DS_Store`, `node_modules/`); `.idea/` and the old
   `delsana-prompt.md` removed from the repository (they stay on disk).
