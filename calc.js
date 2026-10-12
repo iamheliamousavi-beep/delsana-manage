@@ -7,7 +7,10 @@
    v2 model: a product has only `base` (shop price per unit) and `hp`
    (page profit per unit).  There is no cost, no shop profit and no stock.
    v3 model: adds the `mixed` payment method (part Snapp Pay + part cash).
-   Cash and snapp results are byte-for-byte identical to v2. */
+   Cash and snapp results are byte-for-byte identical to v2.
+   v4 model (follow-up): the mixed Snapp part S is the customer's exact
+   Snapp charge; the Snapp fee (snappRound(S)-S, clamped to 0 with a
+   warning for tiny S) is paid in cash. */
 (function (root) {
   'use strict';
 
@@ -166,30 +169,39 @@
 
     var customer_total;
     var snapp_part = 0, snapp_charge = 0, cash_charge = 0;
-    var snapp_deposit = 0, snapp_fee = 0, snapp_below_deposit = false;
+    var snapp_deposit = 0, snapp_fee = 0, snapp_fee_clamped = false;
     if (method === 'mixed') {
       var S = parseSnappPart(sRaw);
       if (S >= net) {
         throw new Error('مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید');
       }
-      snapp_part = S;
-      snapp_charge = snappRound(S, mult, step);
-      if (snapp_charge <= 0) {
-        throw new Error('مبلغ اسنپ‌پی خیلی کم است؛ بعد از گرد کردن صفر می‌شود');
+      var rounded = snappRound(S, mult, step);
+      if (rounded < S) {
+        /* tiny S: the fee is clamped to 0 (non-blocking warning) */
+        snapp_fee = 0;
+        snapp_fee_clamped = true;
+      } else {
+        snapp_fee = rounded - S;
+        snapp_fee_clamped = false;
       }
-      cash_charge = (net - S) + shipping_fee;
+      if (!(snapp_fee < S)) {
+        throw new Error('کارمزد اسنپ‌پی از مبلغ اسنپ‌پی بیشتر می‌شود؛ ضریب را بررسی کنید');
+      }
+      snapp_part = S;
+      snapp_charge = S;
+      snapp_deposit = S - snapp_fee;
+      cash_charge = (net - S) + snapp_fee + shipping_fee;
       customer_total = snapp_charge + cash_charge;
-      snapp_deposit = S;
-      snapp_fee = snapp_charge - S;
-      snapp_below_deposit = snapp_charge < S;
     } else if (method === 'snapp') {
       customer_total = roundToStep(net * mult, step) + shipping_fee;
       snapp_charge = customer_total;
       snapp_deposit = payout;
-      snapp_fee = customer_total - payout;
+      snapp_fee = 0;
     } else {
       customer_total = net + shipping_fee;
       cash_charge = customer_total;
+      snapp_deposit = 0;
+      snapp_fee = 0;
     }
 
     var goods_owe = baseSum - mahdi_discount;
@@ -203,10 +215,11 @@
        every toman of the payout is owed either to the shop or kept by the
        page; what the customer pays splits exactly into Snapp + cash parts;
        what the page ends up holding (Snapp deposit + cash in hand) is the
-       payout. All three hold for every method. */
+       payout; for mixed, total = payout + snapp_fee. All hold for every method. */
     var invariant_ok = (owe + h_share) === payout &&
                        (snapp_charge + cash_charge) === customer_total &&
-                       (snapp_deposit + cash_charge) === payout;
+                       (snapp_deposit + cash_charge) === payout &&
+                       (method !== 'mixed' || customer_total === payout + snapp_fee);
     if (!invariant_ok) {
       throw new Error('خطای محاسباتی داخلی: پرداختی برابر با سهم‌ها نیست');
     }
@@ -232,21 +245,26 @@
       cash_charge: cash_charge,
       snapp_deposit: snapp_deposit,
       snapp_fee: snapp_fee,
-      /* all three invariants above hold */
+      /* all four invariants above hold */
       invariant_ok: invariant_ok,
       /* warnings only — never block the user */
       negative_helia_share: h_share < 0,
-      snapp_below_deposit: snapp_below_deposit
+      snapp_fee_clamped: snapp_fee_clamped
     };
   }
 
   /* One definition of the Snapp settlement for a stored order row
      (Accounts / Reports / Invoice all use this): cash -> 0,
-     snapp -> payout, mixed -> snapp_part. */
+     snapp -> payout, mixed -> snapp_part - snapp_fee. Prefers the stored
+     snapp_deposit column when present. */
   function snappDeposit(order) {
     if (!order) return 0;
+    if (order.snapp_deposit !== undefined && order.snapp_deposit !== null && order.snapp_deposit !== '') {
+      var v = Math.floor(Number(order.snapp_deposit));
+      if (isFinite(v)) return v;
+    }
     var m = order.payment_method || order.method || 'cash';
-    if (m === 'mixed') return Math.floor(Number(order.snapp_part) || 0);
+    if (m === 'mixed') return Math.floor(Number(order.snapp_part) || 0) - Math.floor(Number(order.snapp_fee) || 0);
     if (m === 'snapp') return Math.floor(Number(order.payout) || 0);
     return 0;
   }
@@ -269,7 +287,7 @@
   }
 
   var Calc = {
-    VERSION: 3,
+    VERSION: 4,
     BEARERS: BEARERS,
     SHIPPING: SHIPPING,
     METHODS: METHODS,

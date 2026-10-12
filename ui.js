@@ -428,6 +428,12 @@
       clearTimeout(t);
       t = setTimeout(function () { fn.apply(self, args); }, ms || 250);
     };
+  };
+
+  /* Admin danger confirms (part B): the destructive button stays disabled
+     until the user types exactly «حذف». Pure so tests.html can check it. */
+  function isDeleteConfirm(text) {
+    return String(text === null || text === undefined ? '' : text).trim() === 'حذف';
   }
 
   /* --------------------------------------------------------------- theme */
@@ -509,6 +515,7 @@
     BEARER_LABEL: BEARER_LABEL,
     bearerLabel: bearerLabel, shippingLabel: shippingLabel, methodLabel: methodLabel,
     downloadCSV: downloadCSV, errMessage: errMessage, debounce: debounce,
+    isDeleteConfirm: isDeleteConfirm,
     theme: {
       current: currentTheme, stored: storedTheme, system: systemTheme,
       apply: applyTheme, set: setTheme, toggle: toggleTheme, paint: paintThemeControls

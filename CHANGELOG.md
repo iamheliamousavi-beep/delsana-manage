@@ -3,6 +3,56 @@
 Notable changes to **Delsana Management**. Version 2 implements the master prompt
 (`delsana-master-prompt.md`); older history is listed at the end.
 
+## Unreleased — mixed payment: Snapp part is the real Snapp charge
+
+- The mixed Snapp part `S` is now the exact amount the customer pays through Snapp Pay
+  (never multiplied, never rounded up): `snapp_charge = S`,
+  `snapp_fee = max(0, snappRound(S) − S)` paid in cash,
+  `cash_charge = (net − S) + snapp_fee + shipping_fee`,
+  `snapp_deposit = S − snapp_fee`, `total = payout + snapp_fee`.
+  Tiny parts clamp the fee to 0 with a non-blocking `snapp_fee_clamped` warning
+  («مبلغ اسنپ‌پی خیلی کم است؛ کارمزد صفر در نظر گرفته شد»); `fee >= S` is rejected
+  («کارمزد اسنپ‌پی از مبلغ اسنپ‌پی بیشتر می‌شود؛ ضریب را بررسی کنید»).
+  The old `snapp_below_deposit` flag/warning and the
+  «بعد از گرد کردن صفر می‌شود» error are removed.
+- New columns `snapp_fee`/`snapp_deposit` (backfilled without touching totals:
+  cash → 0/0, snapp → 0/`payout`, legacy mixed recomputed from `total − payout`),
+  four invariants in CHECK constraints, pure `order_amounts` now returns
+  `snapp_fee` + `snapp_fee_clamped` and is reused by `create_order`.
+  Migration `009_mixed_snapp_charge.sql` mirrored into `setup.sql`; run it **before**
+  pushing the frontend (export a CSV backup first).
+- Frontend: «مبلغ اسنپ‌پی مشتری (تومان)» label + hint, live rows
+  («پرداخت با اسنپ‌پی (مشتری)», «پرداخت نقدی (مشتری)» with
+  «شامل کارمزد اسنپ‌پی: …», «واریزی اسنپ‌پی به پیج»), card cells
+  («اسنپ‌پی (مشتری)», «نقدی (مشتری، شامل کارمزد)», «واریزی اسنپ‌پی»),
+  Accounts bucket by `snapp_deposit`, CSV columns `snapp_fee`/`snapp_deposit`.
+- Telegram invoice for mixed: «اسنپ‌پی (مشتری): …»,
+  «نقدی (مشتری، شامل کارمزد اسنپ‌پی …): …», «واریزی اسنپ‌پی: …»; cash/snapp unchanged.
+- Tests: `tests.html` §5 (OWNER/M1–M9, clamped warnings, fee error, 5,000-combo sweep
+  with `charge === S`, parity loop, stored-column `snappDeposit`),
+  `tests/mixed_payment.sql` rewritten (OWNER included), Deno invoice asserts,
+  JS↔SQL parity by construction (same integer formulas; SQL run is UNVERIFIED here).
+
+## Unreleased — admin edit/delete with audit log
+
+- New `audit_log` table (admin reads via `admin_list_audit` only; writes via RPCs only)
+  and seven admin-only RPCs: `admin_update_order` (any status, full money recompute
+  through `order_amounts`, unknown keys rejected, `order_edited` outbox),
+  `admin_delete_order` (hard delete + `order_deleted` outbox, old pending rows marked
+  processed), `admin_update_product` / `admin_delete_product` (snapshots in old orders
+  untouched, `referenced_by_orders` count), `admin_restore_order` /
+  `admin_restore_product` (original id, fresh channel message for orders),
+  `admin_list_audit`. Migration `010_admin_edit_delete.sql` mirrored into `setup.sql`.
+- UI (admin only): «ویرایش کامل» full-screen order modal (banner, all 7 statuses,
+  live summary on the order's own snapshots, editable line list, «افزودن کالا از لیست»),
+  typed-«حذف» order/product deletes, product «ویرایش کامل», Settings
+  «تاریخچه تغییرات ادمین» (latest 100, field diff, «بازگردانی»).
+- Notifications: `order_edited` / `order_deleted` / `product_deleted` DMs + channel edit
+  from the payload for deletions (never loads the missing row); test mode respected;
+  pushes stay lock-screen safe. Deno tests 7–9.
+- Tests: `tests/admin_edit_delete.sql` (throw-away rows, rolled back; UNVERIFIED here),
+  `tests.html` §6 (6 admin client checks), manual checklist §13 items 17–19.
+
 ## Unreleased — mixed payment («ترکیبی»)
 
 - New `mixed` payment method (part Snapp Pay + part cash): the seller enters the Snapp

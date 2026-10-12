@@ -133,9 +133,9 @@ Everything is referenced with **relative paths**, so a sub-path works out of the
 
 Open `tests.html` in a browser. It runs every worked example from the specification (the money
 cases of section 2, the rounding regressions, the error case and the number-parsing cases of
-5.14, plus the mixed-payment cases M1–M9, error cases, a 5,000-combo invariant sweep, the
-rounding-parity loop and the input-parsing cases) and shows `PASS` / `FAIL` for each one —
-96 checks in total.
+5.14, plus the mixed-payment cases OWNER/M1–M9, error cases, a 5,000-combo invariant sweep, the
+rounding-parity loop, the input-parsing cases and the admin client checks of section ۶) and shows
+`PASS` / `FAIL` for each one.
 
 Run it again after changing anything in `calc.js`.
 
@@ -153,18 +153,20 @@ partners see exactly the same numbers.
 | `sub` | `Σ q · unit_sum`, `net = sub − discount` |
 | Cash total | `net + shipping_fee` |
 | Snapp total | `roundToStep(net · snapp_multiplier, rounding_step) + shipping_fee` |
-| Mixed: Snapp part `S` | entered by the seller, `0 < S < net`, integer ≥ 1 |
-| Mixed: customer pays via Snapp | `snapp_charge = snappRound(S · multiplier, rounding_step)` (exact integer math, §3 of the mixed-payment prompt) |
-| Mixed: customer pays cash | `cash_charge = (net − S) + shipping_fee` |
-| Mixed: customer total | `snapp_charge + cash_charge` |
+| Mixed: Snapp part `S` | entered by the seller, `0 < S < net`, integer ≥ 1 — **the exact amount the customer pays through Snapp Pay** (never multiplied) |
+| Mixed: Snapp fee | `snapp_fee = max(0, snappRound(S) − S)` (exact integer math, §3 of the mixed-payment prompt); **the customer pays it in cash**. Tiny `S` with `snappRound(S) < S` clamps the fee to 0 with a non-blocking warning |
+| Mixed: customer pays via Snapp | `snapp_charge = S` exactly |
+| Mixed: customer pays cash | `cash_charge = (net − S) + snapp_fee + shipping_fee` |
+| Mixed: customer total | `snapp_charge + cash_charge = net + shipping_fee + snapp_fee` |
 | `payout` (Snapp settles) | `net + shipping_fee` (same as a cash sale) |
-| Snapp deposit to the page | `0` (cash), `payout` (snapp), `S` (mixed) |
+| Snapp deposit to the page | `0` (cash), `payout` (snapp), `S − snapp_fee` (mixed) |
 | `owe` (page → shop) | `Σ q · base − shop_discount + shipping_fee` |
 | `h_share` | `Σ q · hp − page_discount` |
 
 Discount bearer: `helia` (پیج) → the page pays all of it, `mahdi` (مغازه) → the shop pays all of
 it, `split` → half each. Invariants, for **every** method: `owe + h_share == payout`,
-`snapp_charge + cash_charge == total`, `snapp_deposit + cash_charge == payout`.
+`snapp_charge + cash_charge == total`, `snapp_deposit + cash_charge == payout`, and for mixed
+`snapp_charge == snapp_part`, `snapp_deposit == snapp_part − snapp_fee`, `total == payout + snapp_fee`.
 
 Everything is recomputed **on the server** inside `create_order`; the client numbers are never trusted.
 
@@ -188,18 +190,41 @@ awaiting_snapp ─────► paid       │
 
 | Tab | What it does |
 |-----|--------------|
-| **محصولات** | Live prices (cash + Snapp), availability pill, search, «عدم موجودی» / «موجود شد» (shop only, existing orders untouched), products are archived, never deleted, CSV export. Shop edits name, «قیمت از مغازه» and «سود پیج», adds products and runs a bulk price update (% or fixed) on the shop price. Page edits only «سود پیج». |
-| **سفارش جدید** | Product picker + quantities (an unavailable product blocks the save until it is removed), customer/phone/address/10-digit postal code, shipping, payment (cash / Snapp / mixed «ترکیبی» with a Snapp-part amount + ۲۵٪/۵۰٪/۷۵٪ helper chips), Snapp multiplier override, discount + bearer, live summary. |
-| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment incl. «ترکیبی», shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export (now with `snapp_part`, `snapp_charge`, `cash_charge`), and «ایمپورت لیست پست» (section 8.1). |
+| **محصولات** | Live prices (cash + Snapp), availability pill, search, «عدم موجودی» / «موجود شد» (shop only, existing orders untouched), products are archived, never deleted, CSV export. Shop edits name, «قیمت از مغازه» and «سود پیج», adds products and runs a bulk price update (% or fixed) on the shop price. Page edits only «سود پیج». **Admin** additionally sees «ویرایش کامل» (name, base price, hp, available, archived in one form) and «حذف کامل محصول» (typed-«حذف» confirm showing how many orders reference it; old orders keep their snapshots). |
+| **سفارش جدید** | Product picker + quantities (an unavailable product blocks the save until it is removed), customer/phone/address/10-digit postal code, shipping, payment (cash / Snapp / mixed «ترکیبی» with a Snapp-part amount + ۲۵٪/۵۰٪/۷۵٪ helper chips), Snapp multiplier override, discount + bearer, live summary. For mixed the label reads «مبلغ اسنپ‌پی مشتری (تومان)»: what the customer pays via Snapp; the fee is shown inside the cash row («شامل کارمزد اسنپ‌پی») and «واریزی اسنپ‌پی به پیج» shows what Snapp settles. |
+| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment incl. «ترکیبی», shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export (with `snapp_part`, `snapp_charge`, `cash_charge`, `snapp_fee`, `snapp_deposit`), and «ایمپورت لیست پست» (section 8.1). **Admin** additionally sees «ویرایش کامل» (full-screen modal: customer fields, all 7 statuses, tracking, shipping/payment with live summary, discount + bearer, the order's own settings snapshot, editable line list) and «حذف سفارش» (typed-«حذف» confirm; the card disappears, realtime removes it elsewhere). |
 | **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`, sums and rows by Snapp deposit — `S` for mixed, `payout` for snapp — with a part breakdown on mixed rows), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
 | **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, «سهم پیج», «پرداختی به مغازه», top-5 products, cash vs Snapp vs mixed counts with money split by channel (`cashSum = Σ cash_charge`, `snappSum = Σ snapp_charge`), post vs courier, discounts by bearer — the same for both partners. |
-| **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications, plus the admin-only shared «حالت تست (بی‌صدا)» which drops the automatic partner/channel/push notifications while you try features — your own «اعلان آزمایشی» and invoice still work), and the backup reminder. |
+| **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications, plus the admin-only shared «حالت تست (بی‌صدا)» which drops the automatic partner/channel/push notifications while you try features — your own «اعلان آزمایشی» and invoice still work), **the admin-only «تاریخچه تغییرات ادمین» card** (latest 100 audit rows with a «بازگردانی» button on deletions), and the backup reminder. |
 
 **Roles.** Version 2 has no secret numbers any more: both partners see `base`, `hp`, totals,
 `owe` and `h_share`. What the database still enforces through **RLS** (not only the UI): only the
 shop changes product names, `base_price`, availability and archives; only the page changes `hp`;
 every money/status write goes through a `security definer` RPC; and a user without a `profiles`
 row cannot read anything or call any RPC.
+
+### 8.0 Admin powers («ادمین» only, enforced in the database)
+
+Only the `admin` role (`public.is_admin()`) can edit or delete. Page and store users never see
+the buttons, and calling the RPCs as them fails with «دسترسی غیرمجاز».
+
+- **Orders:** «ویرایش کامل» edits customer data, shipping/payment/`S`, discount + bearer,
+  tracking, any of the 7 statuses (bypassing the normal flow, logged as «تغییر توسط ادمین»),
+  the three settings snapshots and the full line list (price snapshots per line, archived or
+  unavailable products allowed). All money is recomputed server-side through `order_amounts`;
+  the other partners get an `order_edited` notification. «حذف سفارش» is a **hard delete**
+  (typed-«حذف» confirm): the only remaining copy is the audit row, which powers «بازگردانی».
+- **Products:** «ویرایش کامل» changes name, base price, hp, available and archived in one call;
+  «حذف کامل محصول» hard-deletes (typed-«حذف» confirm, shows how many orders reference it).
+  Old orders keep their snapshots and stay readable.
+- **Audit log:** every admin RPC writes one `audit_log` row in the same transaction (`before` /
+  `after` snapshots). Settings → «تاریخچه تغییرات ادمین» lists the latest 100 with a short
+  field diff; deletions offer «بازگردانی», which re-inserts the row with its original id
+  (a second restore fails). Deletion is otherwise **permanent**.
+- **Notifications:** `order_edited` («✏️ فاکتور … توسط ادمین ویرایش شد» + changed fields, max 6),
+  `order_deleted` («🗑 سفارش … توسط ادمین حذف شد», channel post edited from the payload) and
+  `product_deleted` («🗑 محصول … حذف شد»). Recipients: all linked partners except the actor;
+  test mode («حالت تست») is respected. Push texts stay lock-screen safe (names only, no amounts).
 
 ### 8.1 Importing a post-office list («ایمپورت لیست پست»)
 
@@ -266,6 +291,16 @@ Requires migration `004_bulk_set_tracking.sql` (section 12). No data ever leaves
     like `snapp` today — which also ignores it rather than requiring null.
 20. **Mixed payment**: a null discount bearer computes as `helia`, matching what the
     validator already accepts; the frontend never sends null.
+21. **Mixed payment (follow-up)**: the Snapp part is the customer's exact Snapp charge;
+    the fee is clamped to 0 (with a warning) when `snappRound(S) < S` for tiny parts.
+22. **Admin edits** keep the order's own settings snapshot unless overridden; the one
+    exception is switching a courier order to post with no `shipping_fee` override, which
+    falls back to the current global `post_fee` (the courier row stores no post snapshot).
+23. **Admin status override** bypasses the normal flow and is logged in `status_history`
+    with the note «تغییر توسط ادمین»; payment-method changes keep the current status
+    unless the admin passes one explicitly.
+24. **Deleted channel posts** show the customer line plus «🗑 این سفارش حذف شد» (the full
+    original text is unavailable — the row is gone — so only the customer line is kept).
 
 ## 9.1 Display names
 
@@ -427,10 +462,14 @@ Notes:
    version-1 database also run `select * from product_costs;` and `select * from order_private;`
    in the SQL Editor and save the results — migration 002 drops both tables.
 2. In the SQL Editor run, **in this order**, the idempotent migrations:
-   `migrations/001_security.sql` → `migrations/002_simplify_products.sql` →
-   `migrations/003_notifications.sql` → `migrations/004_bulk_set_tracking.sql` →
-   `migrations/005_fix_bulk_set_tracking.sql` → `migrations/006_telegram_pause.sql` →
-   `migrations/007_admin_role.sql` → `migrations/008_mixed_payment.sql`.
+   `migrations/001_security.sql` →
+   `migrations/002_simplify_products.sql` →
+   `migrations/003_notifications.sql` →
+   `migrations/004_bulk_set_tracking.sql` →
+   `migrations/005_fix_bulk_set_tracking.sql` →
+   `migrations/006_telegram_pause.sql` →
+   `migrations/007_admin_role.sql` → `migrations/008_mixed_payment.sql` →
+   `migrations/009_mixed_snapp_charge.sql` → `migrations/010_admin_edit_delete.sql`.
    Running one twice changes nothing.
    A fresh database needs none of them: `setup.sql` already contains everything.
    Migration 004 adds the `bulk_set_tracking` RPC (section 8.1); until it is applied the
@@ -440,6 +479,11 @@ Notes:
    Migration 008 adds mixed payment; until it is applied, creating a mixed order fails
    server-side and the new `loadOrders` columns break the orders list — run it before
    pushing the frontend.
+   Migration 009 fixes the mixed money model (Snapp part = real charge, new
+   `snapp_fee`/`snapp_deposit` columns, backfills legacy mixed rows without touching
+   totals) — run it before pushing the frontend, after exporting a CSV backup.
+   Migration 010 adds the `audit_log` table and the `admin_*` RPCs; until it is applied
+   the admin edit/delete buttons report a missing-RPC error and change nothing.
 3. Supabase Dashboard → **Authentication → Providers → Email** → turn **OFF** «Allow new users to
    sign up» (the app has only its hand-created users, section 5.4 of the spec).
 4. Set the secrets (10.2), deploy the four functions (10.3, 10.6, 10.7), register the Telegram
@@ -454,9 +498,10 @@ Notes:
 
 | Where | What |
 |-------|------|
-| `tests.html` in a browser | 96 checks: every money example of section 2, the rounding regressions, the error case and the number-parsing cases of 5.14, the PDF parsing and order-matching of the post-list import (section 8.1, invented fixtures), plus the mixed-payment section (M1–M9, warning flag, error cases, 5,000-combo invariant sweep, `snappRound` parity loop, `snappDeposit`, Snapp-part input parsing, reports identity). |
-| `deno test supabase/functions/_shared/format.test.ts` | 6 checks for the notification messages: Jalali date for a known Tehran timestamp, channel text (with/without code, cancelled, HTML-escaped name), invoice (`owe` + `h_share`, no cost text, mixed part lines), the merge rule, the push payload. |
-| `tests/mixed_payment.sql` in the SQL Editor | M1–M9, all error cases, all 13 old examples and a 500-combo invariant sweep against `public.order_amounts` (no login needed; ends with `ALL PASSED`). |
+| `tests.html` in a browser | Money examples, rounding regressions, number parsing, post-list import fixtures, mixed payment (OWNER/M1–M9, error cases, 5,000-combo sweep, parity loop, `snappDeposit`, input parsing, reports identity) and the admin client section ۶ (line-list totals, typed-«حذف» rule, snapshot override). |
+| `deno test supabase/functions/_shared/format.test.ts` | 9 checks: Jalali date, channel text, invoice (mixed lines with fee), merge rule, push payload, and the three admin events (`order_edited`, `order_deleted` + deleted channel text, `product_deleted`). |
+| `tests/mixed_payment.sql` in the SQL Editor | OWNER/M1–M9, all error cases, all 13 old examples and a 500-combo invariant sweep against `public.order_amounts` (no login needed; ends with `ALL PASSED`). |
+| `tests/admin_edit_delete.sql` in the SQL Editor | Admin RPCs on throw-away rows (rolled back): non-admin block on all 7 RPCs, delivered-order edit (2 cases + invariants), cash → mixed OWNER numbers, unknown-key rejection, delete (audit + `order_deleted` + pending processed), restore (same id, double-restore fails), product delete count + snapshots. Ends with `ALL PASSED`. |
 | SQL harness (`run.js`) | 329 checks: both installation paths, all grants and RLS, the money invariants and the notification RPCs (development only, not shipped). |
 
 **Manual checklist — run once after every deploy**
@@ -493,6 +538,21 @@ Notes:
     other phone — the partner gets no DM, push or channel message; your own «ارسال اعلان
     آزمایشی» and «فاکتور در تلگرام من» still work. Tap «پایان تست» afterwards.
 16. Mixed payment: new order → «ترکیبی», Snapp part 325,000 on a 650,000 courier order:
-    summary shows اسنپ‌پی 375,000 + نقدی 325,000 = total 700,000; the confirm dialog names
-    both parts; the stored card shows the part cells; Accounts «در انتظار تسویه اسنپ‌پی»
-    counts 325,000; the invoice DM (فاکتور در تلگرام من) lists both parts and the settlement.
+    summary shows «پرداخت با اسنپ‌پی (مشتری)» 325,000 + «پرداخت نقدی (مشتری)» 375,000
+    («شامل کارمزد اسنپ‌پی: 50,000») = total 700,000; «واریزی اسنپ‌پی به پیج» 275,000;
+    the confirm dialog names both parts; the stored card shows the part cells; Accounts
+    «در انتظار تسویه اسنپ‌پی» counts 275,000; the invoice DM (فاکتور در تلگرام من) lists
+    both parts with the fee and the settlement.
+17. Admin edit: log in as ادمین — order cards show «ویرایش کامل» and «حذف سفارش»,
+    product cards show «ویرایش کامل» and «حذف کامل محصول»; log in as پیج/مغازه — none
+    of them are visible. As admin open «ویرایش کامل» on a delivered order: the banner shows,
+    change items/prices and switch cash → mixed (OWNER numbers appear in the live summary),
+    save — totals recompute, the other partner gets «✏️ فاکتور … ویرایش شد», the channel
+    post edits when customer/status/tracking changed.
+18. Admin delete/restore: as admin delete an order (type «حذف» to enable): toast
+    «سفارش حذف شد», the card disappears, the partner gets «🗑 سفارش … حذف شد» and the
+    channel post gains «🗑 این سفارش حذف شد». Settings → «تاریخچه تغییرات ادمین» →
+    «نمایش تاریخچه» lists the delete; «بازگردانی» brings it back with the same id.
+    Open a deleted order's deep link (`?view=orders&order=<id>`): no crash, no highlight.
+19. Admin product delete: the confirm shows how many orders reference the product; after
+    deletion those orders still render with their old snapshots.

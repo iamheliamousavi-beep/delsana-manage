@@ -124,8 +124,9 @@ function groupRows(rows: Row[]): Row[][] {
   const byKey = new Map<string, Row[]>();
   for (const r of rows) {
     // orders merge by order_id; product / reminder rows have no order, so they
-    // merge per kind and never mix two different products in one message.
-    const key = r.order_id ?? `${r.kind}`;
+    // merge per kind and never mix two different products in one message —
+    // except product_deleted, which carries its own name per row.
+    const key = r.order_id ?? (r.kind === 'product_deleted' ? `${r.kind}:${r.id}` : `${r.kind}`);
     const list = byKey.get(key);
     if (list) list.push(r);
     else byKey.set(key, [r]);
@@ -175,7 +176,11 @@ async function handleGroup(
       .maybeSingle();
     if (error) throw new Error(`orders: ${error.message}`);
     order = data as OrderRow | null;
-    if (!order) throw new Error(`order ${group[0].order_id} not found`);
+    // Part B: the three new kinds never throw for a missing order — deleted
+    // rows use only the payload (the row is gone by design).
+    if (!order && !m.has('order_deleted')) {
+      throw new Error(`order ${group[0].order_id} not found`);
+    }
   }
 
   /* 1) Telegram DMs ------------------------------------------------- */
@@ -197,7 +202,14 @@ async function handleGroup(
   }
 
   /* 2) the private channel ------------------------------------------ */
-  if (order && m.touchesChannel) {
+  if (m.has('order_deleted')) {
+    // Payload-only: edit the original post (no order load — it is deleted).
+    try {
+      await syncDeletedChannel(admin, group[0], m);
+    } catch (e) {
+      problems.push(`channel: ${message(e)}`);
+    }
+  } else if (order && m.touchesChannel) {
     try {
       await syncChannel(admin, order, m);
     } catch (e) {
@@ -218,8 +230,21 @@ async function buildDm(
     const entries = await loadReminderEntries(admin, m.reminderOrderIds);
     return { text: F.buildTrackingMissingDm(entries), url: F.appUrl(base, 'orders') };
   }
-  if (m.isProductEvent) {
+  if (m.isProductEvent && m.productDeletedName === null) {
     return { text: F.buildProductEventDm(m), url: F.appUrl(base, 'products') };
+  }
+  // Part B, payload-only (the row may be gone): never loads the order.
+  if (m.productDeletedName !== null) {
+    return {
+      text: F.buildProductDeletedDm(m.productDeletedName),
+      url: F.appUrl(base, 'products'),
+    };
+  }
+  if (m.orderDeleted) {
+    return {
+      text: F.buildOrderDeletedDm(m.orderDeleted.customer),
+      url: F.appUrl(base, 'orders'),
+    };
   }
   if (!order) throw new Error('an order event without an order');
   const built = F.buildEventDm(order, m);
@@ -300,8 +325,27 @@ function shippedDays(o: OrderRow): number {
 }
 
 /* ------------------------------------------------------- channel message 9.3 */
-async function syncChannel(admin: Admin, order: OrderRow, m: F.Merged): Promise<void> {
-  const chat = channelId();
+/**
+ * Part B: after `admin_delete_order` the row is gone, so the channel post is
+ * edited from the payload alone (`tg_channel_msg_id` saved at delete time).
+ * The post keeps the customer line and gains «🗑 این سفارش حذف شد». When the
+ * id is null (restored/never posted) nothing is sent to the channel.
+ */
+async function syncDeletedChannel(
+  admin: Admin,
+  row: Row,
+  m: F.Merged,
+): Promise<void> {
+  void admin;
+  const payload = (row.payload ?? {}) as Record<string, unknown>;
+  const msgId = Number(payload.tg_channel_msg_id ?? 0);
+  if (!msgId) return;
+  const text = F.buildDeletedChannelText(m.orderDeleted?.customer ?? '');
+  const out = await editMessageText(channelId(), msgId, text);
+  void out; // missing (deleted post / re-added bot): nothing to recreate
+}
+
+async function syncChannel(admin: Admin, order: OrderRow, m: F.Merged): Promise<void> {  const chat = channelId();
   const text = F.buildChannelText(order, m.statusTo === 'cancelled');
   const hash = await sha256(text);
 

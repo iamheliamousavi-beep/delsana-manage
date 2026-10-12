@@ -25,6 +25,8 @@ export type Order = {
   snapp_part: number | null;
   snapp_charge: number | null;
   cash_charge: number | null;
+  snapp_fee: number | null;
+  snapp_deposit: number | null;
 };
 
 export type OutboxRow = {
@@ -150,6 +152,12 @@ export type Merged = {
   available: boolean | null;
   priceCount: number | null;
   reminderOrderIds: string[];
+  /** admin edit: Persian field names changed (payload.changed) */
+  orderEditedChanged: string[] | null;
+  /** admin delete: payload carries everything (the row is gone) */
+  orderDeleted: { customer: string; total: number; status: string } | null;
+  /** admin product delete: payload name */
+  productDeletedName: string | null;
   /** the channel message has to be created or edited */
   touchesChannel: boolean;
   /** price / availability events, caused by the shop only */
@@ -169,9 +177,16 @@ export function mergeEvents(rows: OutboxRow[]): Merged {
   const av = find('availability_changed')?.payload ?? {};
   const pr = find('prices_changed')?.payload ?? {};
   const tm = find('tracking_missing')?.payload ?? {};
+  const ed = find('order_edited')?.payload ?? {};
+  const del = find('order_deleted')?.payload ?? {};
+  const pdel = find('product_deleted')?.payload ?? {};
 
   const statusTo = typeof st.to === 'string' ? (st.to as string) : null;
   const cancelled = statusTo === 'cancelled';
+
+  const editedChanged = Array.isArray(ed.changed)
+    ? (ed.changed as unknown[]).filter((c): c is string => typeof c === 'string')
+    : null;
 
   return {
     rows,
@@ -189,10 +204,19 @@ export function mergeEvents(rows: OutboxRow[]): Merged {
     available: typeof av.available === 'boolean' ? (av.available as boolean) : null,
     priceCount: typeof pr.count === 'number' ? (pr.count as number) : null,
     reminderOrderIds: Array.isArray(tm.order_ids) ? (tm.order_ids as string[]) : [],
-    // The channel post carries a `وضعیت:` line, so every status change has
-    // to create or edit it — not just creation, tracking and cancellation.
-    touchesChannel: has('order_created') || has('status_changed') || has('tracking_changed') || cancelled,
-    isProductEvent: has('prices_changed') || has('availability_changed'),
+    orderEditedChanged: editedChanged,
+    orderDeleted: typeof del.customer === 'string'
+      ? {
+        customer: del.customer as string,
+        total: typeof del.total === 'number' ? (del.total as number) : 0,
+        status: typeof del.status === 'string' ? (del.status as string) : '',
+      }
+      : null,
+    productDeletedName: typeof pdel.name === 'string' ? (pdel.name as string) : null,
+    // The channel post carries customer + `وضعیت:`, so an admin edit has to
+    // refresh it; a deletion edits the post from the payload (row is gone).
+    touchesChannel: has('order_created') || has('status_changed') || has('tracking_changed') || has('order_edited') || has('order_deleted') || cancelled,
+    isProductEvent: has('prices_changed') || has('availability_changed') || has('product_deleted'),
   };
 }
 
@@ -227,6 +251,60 @@ export function buildChannelText(order: Order, cancelledLine = false): string {
   return lines.join('\n');
 }
 
+/**
+ * Channel edit for a deleted order (part B): the row is gone, so the caller
+ * passes only the payload customer. The post keeps the customer line and
+ * gains the deleted line; amounts never appear on the channel.
+ */
+export function buildDeletedChannelText(customer: string): string {
+  return `👤 مشتری: <b>${escapeHtml(customer)}</b>\n🗑 این سفارش حذف شد`;
+}
+
+/* --------------------------------------- admin event texts (part B, 8.1) */
+const ADMIN_FIELD_FA: Record<string, string> = {
+  customer: 'مشتری',
+  phone: 'تلفن',
+  address: 'آدرس',
+  postal_code: 'کد پستی',
+  note: 'یادداشت',
+  shipping_method: 'روش ارسال',
+  method: 'روش پرداخت',
+  snapp_part: 'مبلغ اسنپ‌پی',
+  discount: 'تخفیف',
+  discount_bearer: 'بر عهده تخفیف',
+  tracking: 'کد رهگیری',
+  status: 'وضعیت',
+  shipping_fee: 'هزینه ارسال',
+  snapp_multiplier: 'ضریب اسنپ‌پی',
+  rounding_step: 'گرد کردن',
+  items: 'کالاها',
+  total: 'مبلغ کل',
+  payout: 'پرداختی',
+  owe: 'پرداختی به مغازه',
+  h_share: 'سهم پیج',
+};
+
+export function adminFieldFa(key: string): string {
+  return ADMIN_FIELD_FA[key] ?? key;
+}
+
+/** «✏️ فاکتور {customer} توسط ادمین ویرایش شد» + up to 6 changed fields. */
+export function buildOrderEditedDm(customer: string, changed: string[] | null): string {
+  const head = `✏️ فاکتور ${customer} توسط ادمین ویرایش شد`;
+  const fields = (changed ?? []).slice(0, 6).map(adminFieldFa).filter((f) => !!f);
+  return fields.length ? `${head}\nتغییرات: ${fields.join('، ')}` : head;
+}
+
+/** «🗑 سفارش {customer} توسط ادمین حذف شد» (payload only, row is gone). */
+export function buildOrderDeletedDm(customer: string): string {
+  return `🗑 سفارش ${customer} توسط ادمین حذف شد`;
+}
+
+/** «🗑 محصول «{name}» حذف شد». */
+export function buildProductDeletedDm(name: string): string {
+  return `🗑 محصول «${escapeHtml(name)}» حذف شد`;
+}
+
 /* ------------------------------------------------------- invoice DM (8.3) */
 export function buildInvoice(order: Order): string {
   const lines: string[] = [];
@@ -246,12 +324,12 @@ export function buildInvoice(order: Order): string {
   lines.push(`🚚 ارسال: ${shippingLabel(order.shipping_method)} — ${money(order.shipping_fee)} تومان`);
   lines.push(`💳 پرداخت: ${methodLabel(order.method)}`);
   if (order.method === 'mixed') {
-    lines.push(`اسنپ‌پی: ${money(order.snapp_charge ?? 0)} تومان`);
-    lines.push(`نقدی: ${money(order.cash_charge ?? 0)} تومان`);
+    lines.push(`اسنپ‌پی (مشتری): ${money(order.snapp_charge ?? 0)} تومان`);
+    lines.push(`نقدی (مشتری، شامل کارمزد اسنپ‌پی ${money(order.snapp_fee ?? 0)}): ${money(order.cash_charge ?? 0)} تومان`);
   }
   lines.push(`💰 مبلغ کل مشتری: ${money(order.total)} تومان`);
   if (order.method === 'snapp') lines.push(`تسویه اسنپ‌پی: ${money(order.payout ?? 0)} تومان`);
-  if (order.method === 'mixed') lines.push(`تسویه اسنپ‌پی: ${money(order.snapp_part ?? 0)} تومان`);
+  if (order.method === 'mixed') lines.push(`واریزی اسنپ‌پی: ${money(order.snapp_deposit ?? order.snapp_part ?? 0)} تومان`);
   lines.push('');
   lines.push('📊 حساب‌وکتاب');
   lines.push(`به مغازه: ${money(order.owe)}`);
@@ -280,9 +358,21 @@ export function buildProductEventDm(m: Merged): string {
 }
 
 /** One merged group produces exactly one message (9.2 step 3). */
-export function buildEventDm(order: Order, m: Merged): DmMessage {
-  if (m.has('order_created')) return { kind: 'invoice', text: buildInvoice(order) };
+export function buildEventDm(order: Order | null, m: Merged): DmMessage {
+  if (m.has('order_created')) {
+    if (!order) throw new Error('an order event without an order');
+    return { kind: 'invoice', text: buildInvoice(order) };
+  }
+  if (m.orderDeleted) return { kind: 'event', text: buildOrderDeletedDm(m.orderDeleted.customer) };
+  if (m.productDeletedName !== null) {
+    return { kind: 'event', text: buildProductDeletedDm(m.productDeletedName) };
+  }
+  if (m.has('order_edited')) {
+    if (!order) throw new Error('an order event without an order');
+    return { kind: 'event', text: buildOrderEditedDm(order.customer, m.orderEditedChanged) };
+  }
   if (m.isProductEvent) return { kind: 'event', text: buildProductEventDm(m) };
+  if (!order) throw new Error('an order event without an order');
 
   const customer = order.customer;
   const lines: string[] = [];
@@ -371,6 +461,15 @@ export function buildPush(
   } else if (m.has('availability_changed')) {
     title = m.available ? 'محصول موجود شد' : 'محصول ناموجود شد';
     body = m.productName ?? '';
+  } else if (m.has('product_deleted')) {
+    title = 'محصول حذف شد';
+    body = m.productDeletedName ?? '';
+  } else if (m.has('order_edited')) {
+    title = 'فاکتور ویرایش شد';
+    body = customer;
+  } else if (m.has('order_deleted')) {
+    title = 'سفارش حذف شد';
+    body = m.orderDeleted?.customer ?? customer;
   } else if (m.has('prices_changed')) {
     title = 'قیمت‌ها به‌روز شد';
     body = `${faNum(m.priceCount ?? 0)} محصول از مغازه به‌روز شد`;

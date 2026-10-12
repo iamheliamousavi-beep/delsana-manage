@@ -4,9 +4,14 @@
 // Deliberately import-free so it runs without fetching anything.
 
 import {
+  adminFieldFa,
   buildChannelText,
+  buildDeletedChannelText,
   buildEventDm,
   buildInvoice,
+  buildOrderDeletedDm,
+  buildOrderEditedDm,
+  buildProductDeletedDm,
   buildProductEventDm,
   buildPush,
   buildTrackingMissingDm,
@@ -65,6 +70,8 @@ const order: Order = {
   snapp_part: 0,
   snapp_charge: 0,
   cash_charge: 840000,
+  snapp_fee: 0,
+  snapp_deposit: 0,
 };
 
 function row(kind: string, payload: Record<string, unknown>, actor: string | null = 'user-h'): OutboxRow {
@@ -140,15 +147,17 @@ Deno.test('12.5 invoice DM builder', () => {
     ...order,
     method: 'mixed',
     snapp_part: 325000,
-    snapp_charge: 375000,
-    cash_charge: 325000,
+    snapp_charge: 325000,
+    snapp_fee: 50000,
+    snapp_deposit: 275000,
+    cash_charge: 375000,
     total: 700000,
   });
   includes(mixed, '💳 پرداخت: ترکیبی (نقدی + اسنپ‌پی)', 'the mixed payment label');
-  includes(mixed, 'اسنپ‌پی: ۳۷۵٬۰۰۰ تومان', 'the customer Snapp part line');
-  includes(mixed, 'نقدی: ۳۲۵٬۰۰۰ تومان', 'the customer cash part line');
+  includes(mixed, 'اسنپ‌پی (مشتری): ۳۲۵٬۰۰۰ تومان', 'the customer Snapp part line');
+  includes(mixed, 'نقدی (مشتری، شامل کارمزد اسنپ‌پی ۵۰٬۰۰۰): ۳۷۵٬۰۰۰ تومان', 'the customer cash part line with fee');
   includes(mixed, '💰 مبلغ کل مشتری: ۷۰۰٬۰۰۰ تومان', 'the mixed customer total');
-  includes(mixed, 'تسویه اسنپ‌پی: ۳۲۵٬۰۰۰ تومان', 'the mixed settlement line');
+  includes(mixed, 'واریزی اسنپ‌پی: ۲۷۵٬۰۰۰ تومان', 'the mixed settlement line');
 
   const cashText = buildInvoice(order);
   excludes(cashText, 'اسنپ‌پی:', 'no Snapp lines on a cash invoice');
@@ -226,6 +235,82 @@ Deno.test('9.3 the channel is only touched when the text changed', () => {
   assertEquals(channelAction(77, before, after), 'edit', 'so the message is edited, not reposted');
 });
 
+/* --------------------------- part B: admin edit/delete notifications */
+Deno.test('B7 admin order_edited DM carries the Persian field names (max 6)', () => {
+  const text = buildOrderEditedDm('مشتری تست', ['customer', 'status', 'tracking', 'items']);
+  includes(text, '✏️ فاکتور مشتری تست توسط ادمین ویرایش شد', 'the edited headline');
+  includes(text, 'مشتری', 'field مشتری');
+  includes(text, 'وضعیت', 'field وضعیت');
+  includes(text, 'کد رهگیری', 'field کد رهگیری');
+  includes(text, 'کالاها', 'field کالاها');
+
+  const bare = buildOrderEditedDm('مشتری تست', []);
+  assertEquals(bare, '✏️ فاکتور مشتری تست توسط ادمین ویرایش شد', 'no fields, no suffix');
+
+  const many = buildOrderEditedDm('مشتری تست', ['customer', 'phone', 'address', 'postal_code', 'note', 'tracking', 'status', 'items']);
+  const lines = many.split('\n');
+  assertEquals(lines.length, 2, 'headline + one field line');
+  excludes(many, 'کالاها', 'at most six fields are listed');
+  assertEquals(adminFieldFa('unknown_key'), 'unknown_key', 'unknown keys pass through');
+
+  // through the merge pipeline, with a real order (edit keeps the row)
+  const m = mergeEvents([row('order_edited', { changed: ['customer', 'total'] })]);
+  assert(m.touchesChannel, 'an admin edit refreshes the channel post');
+  const dm = buildEventDm(order, m);
+  assertEquals(dm.kind, 'event', 'edited group is one event message');
+  includes(dm.kind === 'event' ? dm.text : '', '✏️ فاکتور مشتری تست توسط ادمین ویرایش شد', 'merged edit text');
+});
+
+Deno.test('B7 admin order_deleted DM + channel text use only the payload', () => {
+  const dm = buildOrderDeletedDm('مشتری تست');
+  assertEquals(dm, '🗑 سفارش مشتری تست توسط ادمین حذف شد', 'the deleted DM');
+
+  const m = mergeEvents([row('order_deleted', {
+    customer: 'مشتری تست',
+    tg_channel_msg_id: 77,
+    total: 700000,
+    status: 'paid',
+  })]);
+  assert(m.touchesChannel, 'a deletion touches the channel');
+  // buildEventDm must NOT need the order row (it is deleted)
+  const built = buildEventDm(null, m);
+  assertEquals(built.kind, 'event', 'deleted group is one event message');
+  assertEquals(built.kind === 'event' ? built.text : '', dm, 'payload-only text');
+
+  const channel = buildDeletedChannelText('مشتری تست');
+  assertEquals(channel, '👤 مشتری: <b>مشتری تست</b>\n🗑 این سفارش حذف شد', 'deleted channel text');
+  excludes(channel, '۷۰۰٬۰۰۰', 'the channel never shows an amount');
+  const evil = buildDeletedChannelText('آقا <b>علی</b>');
+  excludes(evil, 'آقا <b>علی', 'customer names are html escaped');
+
+  const push = buildPush(null, m, 'https://example.app', 'admin');
+  assertEquals(push.title, 'سفارش حذف شد', 'deleted push title');
+  assertEquals(push.body, 'مشتری تست', 'push body is only the customer name');
+  assertEquals(push.url, 'https://example.app/?view=orders', 'no order id in the deep link');
+});
+
+Deno.test('B7 admin product_deleted DM + push carry only the name', () => {
+  const dm = buildProductDeletedDm('کالای نمونه');
+  assertEquals(dm, '🗑 محصول «کالای نمونه» حذف شد', 'the product-deleted DM');
+
+  const m = mergeEvents([{
+    id: 11,
+    kind: 'product_deleted',
+    order_id: null,
+    actor: 'user-a',
+    payload: { name: 'کالای نمونه' },
+  }]);
+  assert(m.isProductEvent, 'a product deletion is a product event');
+  assertEquals(m.productDeletedName, 'کالای نمونه', 'the name is parsed');
+  const built = buildEventDm(null, m);
+  assertEquals(built.kind === 'event' ? built.text : '', dm, 'payload-only text');
+
+  const push = buildPush(null, m, 'https://example.app', 'admin');
+  assertEquals(push.title, 'محصول حذف شد', 'product-deleted push title');
+  assertEquals(push.body, 'کالای نمونه', 'product-deleted push body');
+  assertEquals(push.url, 'https://example.app/?view=products', 'product deep link');
+  excludes(push.body, '۸۴۰٬۰۰۰', 'no amount in a push');
+});
 /* ------------------------------------------------------- push text (8.4 / 11) */
 Deno.test('8.4 push payload is lock-screen safe', () => {
   const created = mergeEvents([row('order_created', {}, 'user-h')]);

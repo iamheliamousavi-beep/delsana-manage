@@ -414,6 +414,20 @@ var Screens = (function () {
 
     card.appendChild(edit);
     card.appendChild(actions);
+    /* PART B: admin-only full edit (all fields at once) + hard delete */
+    if (App.isAdmin) {
+      card.appendChild(el('div', { class: 'row wrap', style: 'margin-top:8px' },
+        el('button', {
+          class: 'btn small', type: 'button', text: 'ویرایش کامل',
+          'aria-label': 'ویرایش کامل محصول «' + p.name + '» توسط ادمین',
+          onclick: function () { adminEditProduct(p); }
+        }),
+        el('button', {
+          class: 'btn small danger-outline', type: 'button', text: 'حذف کامل محصول',
+          'aria-label': 'حذف دائمی محصول «' + p.name + '» توسط ادمین',
+          onclick: function () { adminDeleteProduct(p); }
+        })));
+    }
     return card;
   }
 
@@ -427,6 +441,70 @@ var Screens = (function () {
     try {
       await DB.setAvailability(p.id, unavailable);
       UI.toast(unavailable ? 'موجود شد' : 'ناموجود شد', 'ok', 1600);
+      Screens.products.refresh();
+    } catch (e) { showErr(e); }
+  }
+
+  /* PART B: admin edits name/base/hp/available/archived in one form.
+     Existing orders are unaffected (they store price snapshots). */
+  async function adminEditProduct(p) {
+    if (!App.isAdmin) { UI.toast('این گزینه فقط برای ادمین است', 'warn'); return; }
+    var pi = priceInfo(p);
+    var fName = el('input', { type: 'text', value: p.name, 'aria-label': 'نام محصول' });
+    var fBase = el('input', { type: 'text', inputmode: 'numeric', value: String(pi.base), 'aria-label': 'قیمت از مغازه' });
+    var fHp = el('input', { type: 'text', inputmode: 'numeric', value: String(pi.hp), 'aria-label': 'سود پیج' });
+    var fAv = el('input', { type: 'checkbox', checked: p.available !== false, 'aria-label': 'موجود' });
+    var fAr = el('input', { type: 'checkbox', checked: !!p.archived, 'aria-label': 'بایگانی‌شده' });
+    var v = await UI.modal({
+      title: 'ویرایش کامل محصول «' + p.name + '»',
+      body: el('div', {},
+        fieldWrap('نام', fName),
+        fieldWrap('قیمت از مغازه (تومان)', fBase),
+        fieldWrap('سود پیج (هر واحد)', fHp),
+        fieldWrap('موجود', fAv),
+        fieldWrap('بایگانی‌شده', fAr),
+        el('p', { class: 'hint', text: 'سفارش‌های قبلی بدون تغییر می‌مانند (قیمت‌ها در فاکتور ذخیره شده است).' })),
+      actions: [{ label: 'انصراف', value: null }, { label: 'ذخیره', value: '__ok__', primary: true }]
+    });
+    if (v !== '__ok__') return;
+    var name = fName.value.trim();
+    var base = UI.parseInt10(fBase.value);
+    var hp = UI.parseInt10(fHp.value);
+    if (!name) { UI.toast('نام محصول اجباری است', 'warn'); return; }
+    if (base === null || base < 0 || hp === null || hp < 0) {
+      UI.toast('قیمت‌ها باید عدد صحیح غیرمنفی باشند', 'warn'); return;
+    }
+    try {
+      await DB.adminUpdateProduct(p.id, {
+        name: name, base_price: base, hp: hp, available: !!fAv.checked, archived: !!fAr.checked
+      });
+      UI.toast('محصول به‌روز شد', 'ok', 1600);
+      Screens.products.refresh();
+    } catch (e) { showErr(e); }
+  }
+
+  /* PART B: hard delete with a typed «حذف». Old orders keep snapshots. */
+  async function adminDeleteProduct(p) {
+    if (!App.isAdmin) { UI.toast('این گزینه فقط برای ادمین است', 'warn'); return; }
+    var refs = App.orders.filter(function (o) {
+      return (o.items || []).some(function (it) { return it.product_id === p.id; });
+    }).length;
+    var word = el('input', { type: 'text', placeholder: 'حذف', 'aria-label': 'تأیید حذف با نوشتن حذف' });
+    var v = await UI.modal({
+      title: 'حذف کامل محصول',
+      body: el('div', {},
+        el('p', { text: 'محصول «' + p.name + '» برای همیشه حذف شود؟' }),
+        el('p', { class: 'hint', text: UI.toFaDigits(refs) + ' سفارش از این محصول استفاده کرده‌اند؛ آن‌ها بدون تغییر می‌مانند.' }),
+        el('p', { class: 'hint', text: 'برای فعال شدن دکمه حذف، کلمه «حذف» را بنویسید.' }),
+        fieldWrap('تأیید', word)),
+      actions: [{ label: 'انصراف', value: null }, { label: 'حذف محصول', value: '__ok__', cls: 'danger' }]
+    });
+    if (v !== '__ok__') return;
+    if (!UI.isDeleteConfirm(word.value)) { UI.toast('برای حذف، کلمه «حذف» را بنویسید', 'warn'); return; }
+    try {
+      var res = await DB.adminDeleteProduct(p.id);
+      var n = res && res.referenced_by_orders !== undefined ? res.referenced_by_orders : refs;
+      UI.toast('محصول حذف شد (' + UI.toFaDigits(n) + ' سفارش دست‌نخورده ماند)', 'ok');
       Screens.products.refresh();
     } catch (e) { showErr(e); }
   }
@@ -561,9 +639,9 @@ var Screens = (function () {
         el('input', { type: 'text', id: 'no-mult', inputmode: 'decimal', placeholder: String(App.settings.snapp_multiplier) }),
         el('p', { class: 'hint', text: 'پیش‌فرض از تنظیمات خوانده می‌شود؛ سفارش همین مقدار را ذخیره می‌کند' })),
       el('div', { class: 'field', id: 'no-part-wrap', hidden: true },
-        el('label', { for: 'no-snapp-part', text: 'مبلغ اسنپ‌پی (تومان)' }),
+        el('label', { for: 'no-snapp-part', text: 'مبلغ اسنپ‌پی مشتری (تومان)' }),
         el('input', { type: 'text', id: 'no-snapp-part', inputmode: 'numeric', placeholder: 'مثلاً ۳۲۵٬۰۰۰' }),
-        el('p', { class: 'hint', text: 'بخشی از مبلغ کالاها (پس از تخفیف) که با اسنپ‌پی پرداخت می‌شود و اسنپ‌پی به حساب پیج واریز می‌کند' }),
+        el('p', { class: 'hint', text: 'مبلغی که مشتری با اعتبار اسنپ‌پی خودش پرداخت می‌کند؛ کارمزد اسنپ‌پی جدا و نقدی از مشتری گرفته می‌شود' }),
         el('div', { class: 'row wrap', style: 'margin-top:6px' },
           el('button', { class: 'btn tiny', type: 'button', text: '۲۵٪', onclick: function () { fillSnappPart(25); } }),
           el('button', { class: 'btn tiny', type: 'button', text: '۵۰٪', onclick: function () { fillSnappPart(50); } }),
@@ -871,8 +949,8 @@ var Screens = (function () {
     if (r.negative_helia_share) {
       warn.appendChild(el('div', { class: 'alert warn', text: 'سود پیج منفی می‌شود؛ تخفیف را کم کنید' }));
     }
-    if (r.snapp_below_deposit) {
-      warn.appendChild(el('div', { class: 'alert warn', text: 'مبلغ اسنپ‌پی مشتری کمتر از مبلغ تسویه می‌شود؛ مبلغ اسنپ‌پی را تغییر دهید' }));
+    if (r.snapp_fee_clamped) {
+      warn.appendChild(el('div', { class: 'alert warn', text: 'مبلغ اسنپ‌پی خیلی کم است؛ کارمزد صفر در نظر گرفته شد' }));
     }
     if (!r.invariant_ok) {
       warn.appendChild(el('div', { class: 'alert danger', text: 'خطای محاسباتی داخلی؛ لطفاً صفحه را تازه‌سازی کنید' }));
@@ -884,9 +962,8 @@ var Screens = (function () {
       ['هزینه ارسال (' + UI.shippingLabel(r.shipping_method) + ')', UI.fmtMoney(r.shipping_fee), '']
     ];
     if (method === 'mixed') {
-      rows.push(['پرداخت اسنپ‌پی (مشتری)', UI.fmtMoney(r.snapp_charge), '']);
-      rows.push(['کارمزد اسنپ‌پی (از مشتری)', UI.fmtMoney(r.snapp_fee), '']);
-      rows.push(['پرداخت نقدی (مشتری)', UI.fmtMoney(r.cash_charge), '']);
+      rows.push(['پرداخت با اسنپ‌پی (مشتری)', UI.fmtMoney(r.snapp_charge), '']);
+      rows.push(['پرداخت نقدی (مشتری)', UI.fmtMoney(r.cash_charge), 'cash']);
     }
     rows.push(
       [method === 'snapp' ? 'مبلغ اسنپ‌پی شامل کارمزد' : 'مبلغ قابل پرداخت مشتری',
@@ -895,12 +972,15 @@ var Screens = (function () {
       ['سهم پیج', UI.fmtMoney(r.h_share), '']
     );
     if (method === 'snapp') rows.push(['تسویه اسنپ‌پی (نقدی‌مانند)', UI.fmtMoney(r.payout), '']);
-    if (method === 'mixed') rows.push(['تسویه اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), '']);
+    if (method === 'mixed') rows.push(['واریزی اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), '']);
 
     rows.forEach(function (row) {
       wrap.appendChild(el('div', { class: 'sum-row ' + (row[2] || '') },
         el('span', { class: 'k', text: row[0] }),
         el('span', { class: 'v', text: row[1] })));
+      if (method === 'mixed' && row[2] === 'cash') {
+        wrap.appendChild(el('p', { class: 'hint', style: 'margin:-4px 0 6px', text: 'شامل کارمزد اسنپ‌پی: ' + UI.fmtMoney(r.snapp_fee) }));
+      }
     });
   }
 
@@ -1188,8 +1268,18 @@ var Screens = (function () {
           'aria-label': o.pinned ? 'برداشتن سنجاق سفارش' : 'سنجاق‌زدن سفارش',
           text: (o.pinned ? '📌 سنجاق‌شده' : '📎 سنجاق'),
           onclick: function () { togglePin(o); }
-        }))
-    );
+        }),
+        /* PART B: admin-only full edit + hard delete (server enforces) */
+        App.isAdmin ? el('button', {
+          class: 'btn tiny', type: 'button', text: 'ویرایش کامل',
+          'aria-label': 'ویرایش کامل سفارش «' + o.customer + '» توسط ادمین',
+          onclick: function () { adminEditOrder(o); }
+        }) : null,
+        App.isAdmin ? el('button', {
+          class: 'btn tiny danger-outline', type: 'button', text: 'حذف سفارش',
+          'aria-label': 'حذف دائمی سفارش «' + o.customer + '» توسط ادمین',
+          onclick: function () { adminDeleteOrder(o); }
+        }) : null));
     if (o.pinned && o.pin_note) {
       head.querySelector('.who').appendChild(el('div', {
         class: 'pill brand', style: 'margin-top:4px', text: '⚠ ' + o.pin_note
@@ -1220,8 +1310,8 @@ var Screens = (function () {
     }
     if (o.method === 'mixed') {
       money.appendChild(moneyCell('اسنپ‌پی (مشتری)', UI.fmtMoney(o.snapp_charge)));
-      money.appendChild(moneyCell('نقدی (مشتری)', UI.fmtMoney(o.cash_charge)));
-      money.appendChild(moneyCell('تسویه اسنپ‌پی', UI.fmtMoney(o.snapp_part)));
+      money.appendChild(moneyCell('نقدی (مشتری، شامل کارمزد)', UI.fmtMoney(o.cash_charge)));
+      money.appendChild(moneyCell('واریزی اسنپ‌پی', UI.fmtMoney(o.snapp_deposit != null ? o.snapp_deposit : Calc.snappDeposit(o))));
     }
     if (o.shipping_fee > 0) {
       money.appendChild(moneyCell('هزینه پست', UI.fmtMoney(o.shipping_fee)));
@@ -1342,6 +1432,306 @@ var Screens = (function () {
       if (window.App$ && App$.refresh) App$.refresh(false);
     } catch (e) { showErr(e); }
   }
+  /* ================================================== PART B (admin) */
+  /* Admin-only order tools. Buttons are hidden for non-admins; the server
+     enforces is_admin() on every RPC. */
+
+  var ADMIN_ORDER_STATUSES = ['new', 'awaiting_snapp', 'paid', 'settled', 'shipped', 'delivered', 'cancelled'];
+
+  var ADMIN_FIELD_FA = {
+    customer: 'مشتری', phone: 'تلفن', address: 'آدرس', postal_code: 'کد پستی',
+    note: 'یادداشت', shipping_method: 'روش ارسال', method: 'روش پرداخت',
+    snapp_part: 'مبلغ اسنپ‌پی', discount: 'تخفیف', discount_bearer: 'بر عهده تخفیف',
+    tracking: 'کد رهگیری', status: 'وضعیت', shipping_fee: 'هزینه ارسال',
+    snapp_multiplier: 'ضریب اسنپ‌پی', rounding_step: 'گرد کردن', items: 'کالاها',
+    total: 'مبلغ کل', payout: 'پرداختی', owe: 'پرداختی به مغازه', h_share: 'سهم پیج'
+  };
+
+  function adminFieldFa(k) { return ADMIN_FIELD_FA[k] || k; }
+
+  function adminSel(id, options, current) {
+    var s = el('select', { id: id });
+    options.forEach(function (op) {
+      s.appendChild(el('option', { value: op.value, text: op.label }));
+    });
+    s.value = current;
+    return s;
+  }
+
+  /* Full order edit modal (admin only). Reuses Calc.calcOrder with the
+     order's own snapshots for the live summary; the server recomputes. */
+  async function adminEditOrder(o) {
+    if (!App.isAdmin) { UI.toast('این گزینه فقط برای ادمین است', 'warn'); return; }
+
+    var cShip = adminSel('ae-ship', [
+      { value: 'post', label: 'پست پیشتاز' }, { value: 'courier', label: 'پیک شهری' }
+    ], o.shipping_method);
+    var cPay = adminSel('ae-pay', [
+      { value: 'cash', label: 'نقدی / کارت' }, { value: 'snapp', label: 'اسنپ‌پی' }, { value: 'mixed', label: 'ترکیبی' }
+    ], o.method);
+    var cBearer = adminSel('ae-bearer', [
+      { value: 'helia', label: 'پیج' }, { value: 'mahdi', label: 'مغازه' }, { value: 'split', label: 'نصف‌نصف' }
+    ], o.discount_bearer);
+    var cStatus = adminSel('ae-status', ADMIN_ORDER_STATUSES.map(function (s) {
+      return { value: s, label: UI.statusLabel(s) };
+    }), o.status);
+
+    var fCustomer = el('input', { type: 'text', value: o.customer || '' });
+    var fPhone = el('input', { type: 'tel', dir: 'ltr', value: o.phone || '' });
+    var fPostal = el('input', { type: 'text', dir: 'ltr', inputmode: 'numeric', value: o.postal_code || '' });
+    var fAddr = el('textarea', { rows: 2, value: o.address || '' });
+    var fNote = el('textarea', { rows: 2, value: o.note || '' });
+    var fTrack = el('input', { type: 'text', dir: 'ltr', value: o.tracking || '' });
+    var fDisc = el('input', { type: 'text', inputmode: 'numeric', value: String(o.discount || 0) });
+    var fMult = el('input', { type: 'text', inputmode: 'decimal', dir: 'ltr', value: String(o.snapp_multiplier) });
+    var fShipFee = el('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', value: String(o.shipping_fee) });
+    var fStep = el('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', value: String(o.rounding_step) });
+    var fPart = el('input', { type: 'text', inputmode: 'numeric', value: o.method === 'mixed' ? String(o.snapp_part) : '' });
+
+    /* editable line list (admin may override the price snapshot per line) */
+    var linesBox = el('div', { id: 'ae-lines' });
+    function lineRow(it) {
+      var q = el('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', style: 'width:64px', value: String(it.qty), 'aria-label': 'تعداد' });
+      var nm = el('input', { type: 'text', style: 'min-width:120px', value: it.name || '', 'aria-label': 'نام کالا' });
+      var b = el('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', style: 'width:110px', value: String(it.base), 'aria-label': 'قیمت مغازه' });
+      var h = el('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', style: 'width:110px', value: String(it.hp), 'aria-label': 'سود پیج' });
+      var row = el('div', { class: 'row wrap', dataset: { pid: it.product_id || '' } }, q, nm, b, h,
+        el('button', {
+          class: 'btn tiny', type: 'button', text: 'حذف', 'aria-label': 'حذف ردیف کالا',
+          onclick: function () { row.remove(); aeSummary(); }
+        }));
+      row._q = q; row._nm = nm; row._b = b; row._h = h;
+      return row;
+    }
+    (o.items || []).forEach(function (it) { linesBox.appendChild(lineRow(it)); });
+
+    /* «افزودن کالا از لیست»: prefills name/base/hp from the live product */
+    var prodSel = el('select', { id: 'ae-add-sel', 'aria-label': 'افزودن کالا از لیست' });
+    function refillProdSel() {
+      prodSel.innerHTML = '';
+      prodSel.appendChild(el('option', { value: '', text: 'انتخاب کالا…' }));
+      App.products.forEach(function (p) {
+        prodSel.appendChild(el('option', { value: p.id, text: p.name }));
+      });
+    }
+    refillProdSel();
+    var addBtn = el('button', {
+      class: 'btn small', type: 'button', text: 'افزودن کالا از لیست',
+      onclick: function () {
+        var p = productById(prodSel.value);
+        if (!p) { UI.toast('یک کالا انتخاب کنید', 'warn'); return; }
+        var pi = priceInfo(p);
+        linesBox.appendChild(lineRow({ product_id: p.id, name: p.name, qty: 1, base: pi.base, hp: pi.hp }));
+        aeSummary();
+      }
+    });
+
+    var warnBox = el('div', { id: 'ae-warnings' });
+    var sumBox = el('div', { class: 'summary', id: 'ae-summary' });
+
+    function aeLines() {
+      var rows = linesBox.querySelectorAll('.row');
+      var out = [];
+      for (var i = 0; i < rows.length; i++) {
+        out.push({
+          product_id: rows[i].dataset.pid || null,
+          name: rows[i]._nm.value,
+          qty: rows[i]._q.value,
+          base: rows[i]._b.value,
+          hp: rows[i]._h.value
+        });
+      }
+      return out;
+    }
+
+    /* live summary with the order's own snapshots (never global settings) */
+    function aeCalc() {
+      var rawLines = aeLines();
+      var items = [];
+      try {
+        for (var i = 0; i < rawLines.length; i++) {
+          var L = rawLines[i];
+          var q = UI.parseInt10(L.qty);
+          var b = UI.parseInt10(L.base);
+          var h = UI.parseInt10(L.hp);
+          if (q === null || q < 1) throw new Error('تعداد ردیف ' + UI.toFaDigits(i + 1) + ' باید حداقل ۱ باشد');
+          if (b === null || b < 0 || h === null || h < 0) throw new Error('قیمت ردیف ' + UI.toFaDigits(i + 1) + ' نامعتبر است');
+          if (!String(L.name || '').trim()) throw new Error('نام ردیف ' + UI.toFaDigits(i + 1) + ' اجباری است');
+          items.push({ qty: q, base: b, hp: h });
+        }
+      } catch (e) { return { error: e.message }; }
+      if (!items.length) return { error: 'حداقل یک کالا انتخاب کنید' };
+      var method = cPay.value, ship = cShip.value, bearer = cBearer.value;
+      var discount = UI.parseInt10(fDisc.value) || 0;
+      var postFee = UI.parseInt10(fShipFee.value);
+      var mult = UI.parseFloat10(fMult.value);
+      var step = UI.parseInt10(fStep.value);
+      if (postFee === null || postFee < 0) return { error: 'هزینه ارسال نامعتبر است' };
+      if (mult === null || mult <= 0 || mult > 10) return { error: 'ضریب اسنپ‌پی نامعتبر است' };
+      if (step === null || step <= 0) return { error: 'گرد کردن باید عدد مثبت باشد' };
+      var part = null;
+      if (method === 'mixed') {
+        try { part = Calc.parseSnappPart(fPart.value); }
+        catch (e) { return { error: e.message }; }
+      }
+      try {
+        return Calc.calcOrder({
+          items: items, discount: discount, discount_bearer: bearer,
+          shipping_method: ship, payment_method: method,
+          post_fee: postFee, snapp_multiplier: mult, rounding_step: step,
+          snapp_part: part
+        });
+      } catch (e) { return { error: e.message }; }
+    }
+
+    function aeSummary() {
+      warnBox.innerHTML = '';
+      sumBox.innerHTML = '';
+      var isMixed = cPay.value === 'mixed';
+      fPart.disabled = !isMixed;
+      var r = aeCalc();
+      if (!r || r.error) {
+        if (r && r.error) warnBox.appendChild(el('div', { class: 'alert danger', text: r.error }));
+        return;
+      }
+      if (r.negative_helia_share) {
+        warnBox.appendChild(el('div', { class: 'alert warn', text: 'سود پیج منفی می‌شود؛ تخفیف را کم کنید' }));
+      }
+      if (r.snapp_fee_clamped) {
+        warnBox.appendChild(el('div', { class: 'alert warn', text: 'مبلغ اسنپ‌پی خیلی کم است؛ کارمزد صفر در نظر گرفته شد' }));
+      }
+      var rows = [
+        ['مبلغ کالاها', UI.fmtMoney(r.sub), ''],
+        ['تخفیف', '− ' + UI.fmtMoney(r.discount), '']
+      ];
+      if (r.payment_method === 'mixed') {
+        rows.push(['پرداخت با اسنپ‌پی (مشتری)', UI.fmtMoney(r.snapp_charge), '']);
+        rows.push(['پرداخت نقدی (مشتری)', UI.fmtMoney(r.cash_charge), 'cash']);
+      }
+      rows.push(['مبلغ قابل پرداخت مشتری', UI.fmtMoney(r.customer_total), 'total'],
+        ['واریزی اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), ''],
+        ['پرداختی به مغازه', UI.fmtMoney(r.owe), ''],
+        ['سهم پیج', UI.fmtMoney(r.h_share), '']);
+      rows.forEach(function (row) {
+        sumBox.appendChild(el('div', { class: 'sum-row ' + (row[2] || '') },
+          el('span', { class: 'k', text: row[0] }),
+          el('span', { class: 'v', text: row[1] })));
+        if (row[2] === 'cash') {
+          sumBox.appendChild(el('p', { class: 'hint', style: 'margin:-4px 0 6px', text: 'شامل کارمزد اسنپ‌پی: ' + UI.fmtMoney(r.snapp_fee) }));
+        }
+      });
+    }
+
+    var body = el('div', { id: 'ae-body' },
+      el('div', { class: 'alert warn', text: 'شما به‌عنوان ادمین در حال ویرایش یک سفارش ثبت‌شده هستید؛ همهٔ مبالغ دوباره محاسبه می‌شود' }),
+      fieldWrap('نام مشتری', fCustomer),
+      fieldWrap('شماره تماس', fPhone),
+      fieldWrap('کد پستی (۱۰ رقم)', fPostal),
+      fieldWrap('آدرس', fAddr),
+      fieldWrap('یادداشت', fNote),
+      fieldWrap('وضعیت', cStatus),
+      fieldWrap('کد رهگیری', fTrack),
+      fieldWrap('روش ارسال', cShip),
+      fieldWrap('روش پرداخت', cPay),
+      el('div', { class: 'field' },
+        el('label', { text: 'مبلغ اسنپ‌پی مشتری (تومان)' }), fPart,
+        el('p', { class: 'hint', text: 'مبلغی که مشتری با اعتبار اسنپ‌پی خودش پرداخت می‌کند؛ کارمزد جدا و نقدی گرفته می‌شود' })),
+      fieldWrap('تخفیف (تومان)', fDisc),
+      fieldWrap('تخفیف بر عهده', cBearer),
+      el('details', { class: 'history' },
+        el('summary', { text: 'تنظیمات این سفارش' }),
+        fieldWrap('هزینه پست (تومان)', fShipFee),
+        fieldWrap('ضریب اسنپ‌پی', fMult),
+        fieldWrap('گرد کردن (تومان)', fStep)),
+      el('div', { class: 'field' },
+        el('label', { text: 'کالاها (تعداد · نام · قیمت مغازه · سود پیج)' }),
+        linesBox,
+        el('div', { class: 'row wrap', style: 'margin-top:6px' }, prodSel, addBtn)),
+      warnBox,
+      el('div', { class: 'card pad-lg', style: 'margin-top:8px' },
+        el('div', { class: 'card-title' }, el('h3', { text: 'خلاصه زنده' })), sumBox)
+    );
+    body.addEventListener('input', aeSummary);
+    body.addEventListener('change', aeSummary);
+    aeSummary();
+
+    var v = await UI.modal({
+      title: 'ویرایش کامل سفارش «' + o.customer + '»',
+      body: body, cls: 'wide',
+      actions: [{ label: 'انصراف', value: null }, { label: 'ذخیره تغییرات', value: '__ok__', primary: true }]
+    });
+    if (v !== '__ok__') return;
+
+    /* build the patch (server revalidates everything and recomputes money) */
+    var rawLines = aeLines();
+    var items = rawLines.map(function (L) {
+      return {
+        product_id: L.product_id || null,
+        name: String(L.name || '').trim(),
+        qty: Math.floor(Number(UI.toEnDigits(String(L.qty)).replace(/[^0-9-]/g, '')) || 0),
+        base: Math.floor(Number(UI.toEnDigits(String(L.base)).replace(/[^0-9-]/g, '')) || 0),
+        hp: Math.floor(Number(UI.toEnDigits(String(L.hp)).replace(/[^0-9-]/g, '')) || 0)
+      };
+    });
+    var method = cPay.value;
+    var part = null;
+    if (method === 'mixed') {
+      try { part = Calc.parseSnappPart(fPart.value); }
+      catch (e) { UI.toast(UI.errMessage(e), 'warn'); return; }
+    }
+    var patch = {
+      customer: fCustomer.value.trim(),
+      phone: UI.toEnDigits(fPhone.value).replace(/[\s-]/g, ''),
+      address: fAddr.value.trim(),
+      postal_code: UI.toEnDigits(fPostal.value).replace(/[^0-9]/g, ''),
+      note: fNote.value,
+      shipping_method: cShip.value,
+      method: method,
+      snapp_part: part,
+      discount: UI.parseInt10(fDisc.value) || 0,
+      discount_bearer: cBearer.value,
+      tracking: fTrack.value.trim(),
+      status: cStatus.value,
+      shipping_fee: UI.parseInt10(fShipFee.value),
+      snapp_multiplier: UI.parseFloat10(fMult.value),
+      rounding_step: UI.parseInt10(fStep.value),
+      items: items
+    };
+    try {
+      await DB.adminUpdateOrder(o.id, patch);
+      UI.toast('سفارش به‌روز شد ✓', 'ok');
+      await DB.loadOrders();
+      repaintOrders();
+      if (window.App$ && App$.refresh) App$.refresh(false);
+    } catch (e) { showErr(e); }
+  }
+
+  /* Hard delete (admin only): shows customer/total/status and requires
+     typing «حذف». After success the card disappears; realtime removes it on
+     other devices, and a deleted order in a deep link simply never matches
+     (highlightOrder gives up silently). */
+  async function adminDeleteOrder(o) {
+    if (!App.isAdmin) { UI.toast('این گزینه فقط برای ادمین است', 'warn'); return; }
+    var word = el('input', { type: 'text', placeholder: 'حذف', 'aria-label': 'تأیید حذف با نوشتن حذف' });
+    var v = await UI.modal({
+      title: 'حذف سفارش',
+      body: el('div', {},
+        el('p', { text: 'سفارش «' + o.customer + '» به مبلغ ' + UI.money(o.total) + ' (' + UI.statusLabel(o.status) + ') برای همیشه از همهٔ گزارش‌ها حذف می‌شود.' }),
+        el('p', { class: 'hint', text: 'این کار سفارش را برای همیشه از همهٔ گزارش‌ها حذف می‌کند. برای فعال شدن دکمه حذف، کلمه «حذف» را بنویسید.' }),
+        fieldWrap('تأیید', word)),
+      actions: [{ label: 'انصراف', value: null }, { label: 'حذف سفارش', value: '__ok__', cls: 'danger' }]
+    });
+    if (v !== '__ok__') return;
+    if (!UI.isDeleteConfirm(word.value)) { UI.toast('برای حذف، کلمه «حذف» را بنویسید', 'warn'); return; }
+    try {
+      await DB.adminDeleteOrder(o.id);
+      UI.toast('سفارش حذف شد', 'ok');
+      await DB.loadOrders();
+      repaintOrders();
+      if (window.App$ && App$.refresh) App$.refresh(false);
+    } catch (e) { showErr(e); }
+  }
+
   /* section 9.4 — the full invoice (8.3) into my own Telegram chat */
   async function sendInvoiceToTelegram(o, btn) {
     await UI.withBusy(btn, async function () {
@@ -1441,7 +1831,7 @@ var Screens = (function () {
       'payment', 'shipping', 'shipping_fee', 'snapp_multiplier', 'rounding_step',
       'discount', 'discount_bearer', 'shop_discount', 'page_discount',
       'customer_total', 'owe_to_shop', 'page_share', 'snapp_payout',
-      'snapp_part', 'snapp_charge', 'cash_charge',
+      'snapp_part', 'snapp_charge', 'cash_charge', 'snapp_fee', 'snapp_deposit',
       'status', 'tracking', 'pinned', 'pin_note', 'note'
     ];
 
@@ -1457,7 +1847,7 @@ var Screens = (function () {
         o.method, o.shipping_method, o.shipping_fee, o.snapp_multiplier, o.rounding_step,
         o.discount, UI.bearerLabel(o.discount_bearer), o.mahdi_discount, o.helia_discount,
         o.total, o.owe, o.h_share, o.payout,
-        o.snapp_part || 0, o.snapp_charge || 0, o.cash_charge || 0,
+        o.snapp_part || 0, o.snapp_charge || 0, o.cash_charge || 0, o.snapp_fee || 0, o.snapp_deposit || 0,
         UI.statusLabel(o.status), o.tracking, o.pinned ? 'yes' : 'no', o.pin_note, o.note
       ]);
     });
@@ -2558,6 +2948,21 @@ var Screens = (function () {
         el('p', { class: 'hint', id: 'push-status', text: 'در حال بررسی وضعیت اعلان…' }),
         el('div', { class: 'row wrap', style: 'margin-top:6px', id: 'push-actions' }))));
 
+    /* PART B: admin audit log (admin only; table has no client policies,
+       reads go through admin_list_audit, restore through the RPCs) */
+    if (App.isAdmin) {
+      h.appendChild(el('div', { class: 'card', id: 'audit-card' },
+        el('div', { class: 'card-title' }, el('h3', { text: 'تاریخچه تغییرات ادمین' })),
+        el('p', { class: 'hint', text: 'ویرایش‌ها و حذف‌های ادمین با امکان بازگردانی موارد حذف‌شده.' }),
+        el('div', { class: 'row wrap', style: 'margin-top:6px' },
+          el('button', {
+            class: 'btn', id: 'audit-reload', type: 'button', text: 'نمایش تاریخچه',
+            'aria-label': 'نمایش تاریخچه تغییرات ادمین',
+            onclick: refreshAuditLog
+          })),
+        el('div', { id: 'audit-list', style: 'margin-top:8px' })));
+    }
+
     h.appendChild(el('div', { class: 'card' },
       el('div', { class: 'card-title' }, el('h3', { text: 'درباره اپلیکیشن' })),
       el('p', { class: 'hint', style: 'margin:0',
@@ -2688,6 +3093,84 @@ var Screens = (function () {
         refreshTelegramPaused();
       } catch (e) { showErr(e); throw e; }
     });
+  }
+
+  /* --------------------------------- PART B: admin audit log (010) */
+  function auditActionFa(a) {
+    return a === 'edit' ? 'ویرایش' : (a === 'delete' ? 'حذف' : (a === 'restore' ? 'بازگردانی' : a));
+  }
+
+  /* short diff of changed fields for edits (max 4 Persian labels) */
+  function auditDiff(row) {
+    if (row.action !== 'edit' || !row.before || !row.after) return '';
+    var keys = {};
+    Object.keys(row.before).forEach(function (k) { keys[k] = true; });
+    Object.keys(row.after).forEach(function (k) { keys[k] = true; });
+    var skip = { id: 1, created_at: 1, last_actor: 1, status_history: 1, tg_channel_hash: 1, pinned_at: 1 };
+    var changed = Object.keys(keys).filter(function (k) {
+      if (skip[k]) return false;
+      return JSON.stringify(row.before[k]) !== JSON.stringify(row.after[k]);
+    });
+    return changed.slice(0, 4).map(adminFieldFa).join('، ') +
+      (changed.length > 4 ? '…' : '');
+  }
+
+  function auditName(row) {
+    var src = row.after || row.before || {};
+    if (row.entity === 'order') return src.customer || '—';
+    return src.name || '—';
+  }
+
+  async function refreshAuditLog() {
+    var list = $('#audit-list');
+    if (!list) return;
+    list.innerHTML = '';
+    list.appendChild(el('p', { class: 'hint', text: 'در حال بارگذاری…' }));
+    try {
+      var rows = await DB.adminListAudit(100) || [];
+      list.innerHTML = '';
+      if (!rows.length) {
+        list.appendChild(el('p', { class: 'hint', text: 'تغییری ثبت نشده است.' }));
+        return;
+      }
+      rows.forEach(function (r) {
+        var head = el('div', { class: 'name',
+          text: (r.entity === 'order' ? 'سفارش «' + auditName(r) + '»' : 'محصول «' + auditName(r) + '»') +
+                ' — ' + auditActionFa(r.action) });
+        var meta = el('div', { class: 'meta',
+          text: UI.fmtDateTime(r.at) + (r.action === 'edit' && auditDiff(r) ? ' · ' + auditDiff(r) : '') });
+        var item = el('div', { class: 'line-item' }, el('div', { class: 'grow' }, head, meta));
+        if (r.action === 'delete') {
+          item.appendChild(el('button', {
+            class: 'btn tiny', type: 'button', text: 'بازگردانی',
+            'aria-label': 'بازگردانی ' + auditName(r),
+            onclick: function () { adminRestoreAudit(r); }
+          }));
+        }
+        list.appendChild(item);
+      });
+    } catch (e) { showErr(e); list.innerHTML = ''; }
+  }
+
+  async function adminRestoreAudit(r) {
+    var yes = await UI.confirm(
+      (r.entity === 'order' ? 'سفارش «' + auditName(r) + '»' : 'محصول «' + auditName(r) + '»') +
+      ' با همان شناسه بازگردانده شود؟',
+      { title: 'بازگردانی', okLabel: 'بازگردانی' });
+    if (!yes) return;
+    try {
+      if (r.entity === 'order') {
+        await DB.adminRestoreOrder(r.id);
+        UI.toast('سفارش بازگردانده شد', 'ok');
+        await DB.loadOrders();
+        repaintOrders();
+      } else {
+        await DB.adminRestoreProduct(r.id);
+        UI.toast('محصول بازگردانده شد', 'ok');
+      }
+      refreshAuditLog();
+      if (window.App$ && App$.refresh) App$.refresh(false);
+    } catch (e) { showErr(e); }
   }
 
   /* -------------------------------------------- 9.5: phone notifications */

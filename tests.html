@@ -76,6 +76,15 @@
   <tbody></tbody>
 </table>
 
+<h2>۶) ابزارهای ادمین (ویرایش/حذف — سمت کاربر)</h2>
+<p class="inv">منطق خالص سمت کاربر برای ویرایش ادمین: جمع ردیف‌ها با Calc، قانون تایپ «حذف»، اعتبارسنجی ردیف‌ها.</p>
+<table id="admin">
+  <thead>
+    <tr><th>#</th><th>شرح</th><th>نتیجه</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
 <script src="calc.js"></script>
 <script src="ui.js"></script>
 <script src="postimport.js"></script>
@@ -560,31 +569,35 @@
   }
 
   var MIXED = [
+    { d: 'OWNER) base 8M+hp 2M پیک S=5M', in: { items: [{ qty: 1, base: 8000000, hp: 2000000 }], snapp_part: 5000000 },
+      exp: { net: 10000000, snapp_part: 5000000, snapp_fee: 750000, snapp_charge: 5000000, cash_charge: 5750000,
+             customer_total: 10750000, payout: 10000000, snapp_deposit: 4250000, owe: 8000000, h_share: 2000000, snapp_fee_clamped: false } },
     { d: 'M1) ترکیبی، پیک، بدون تخفیف', in: {},
-      exp: { net: 650000, snapp_part: 325000, snapp_charge: 375000, cash_charge: 325000,
+      exp: { net: 650000, snapp_part: 325000, snapp_fee: 50000, snapp_charge: 325000, cash_charge: 375000,
              customer_total: 700000, payout: 650000, owe: 500000, h_share: 150000,
-             snapp_deposit: 325000, snapp_fee: 50000 } },
+             snapp_deposit: 275000, snapp_fee_clamped: false } },
     { d: 'M2) ترکیبی، پست، بدون تخفیف', in: { shipping_method: 'post' },
-      exp: { snapp_charge: 375000, cash_charge: 515000, customer_total: 890000,
-             payout: 840000, owe: 690000, h_share: 150000, snapp_deposit: 325000 } },
+      exp: { snapp_fee: 50000, snapp_charge: 325000, cash_charge: 565000, customer_total: 890000,
+             payout: 840000, owe: 690000, h_share: 150000, snapp_deposit: 275000, snapp_fee_clamped: false } },
     { d: 'M3) ترکیبی، پست، تخفیف ۵۰٬۰۰۰ نصف‌نصف', in: { shipping_method: 'post', discount: 50000, discount_bearer: 'split', snapp_part: 300000 },
-      exp: { net: 600000, snapp_part: 300000, snapp_charge: 345000, cash_charge: 490000,
-             customer_total: 835000, payout: 790000, owe: 665000, h_share: 125000, snapp_deposit: 300000 } },
+      exp: { net: 600000, snapp_part: 300000, snapp_fee: 45000, snapp_charge: 300000, cash_charge: 535000,
+             customer_total: 835000, payout: 790000, owe: 665000, h_share: 125000, snapp_deposit: 255000, snapp_fee_clamped: false } },
     { d: 'M4) مرز گرد: ۳۵۰٬۰۰۰ × ۱٫۱۵ → ۴۰۵٬۰۰۰', in: { snapp_part: 350000 },
-      exp: { snapp_charge: 405000, cash_charge: 300000, customer_total: 705000, snapp_deposit: 350000 } },
+      exp: { snapp_fee: 55000, snapp_charge: 350000, cash_charge: 355000, customer_total: 705000, payout: 650000, snapp_deposit: 295000, snapp_fee_clamped: false } },
     { d: 'M5) ضریب ۱٫۲، پست', in: { shipping_method: 'post', snapp_multiplier: 1.2 },
-      exp: { snapp_charge: 390000, cash_charge: 515000, customer_total: 905000, snapp_deposit: 325000 } },
+      exp: { snapp_fee: 65000, snapp_charge: 325000, cash_charge: 580000, customer_total: 905000, payout: 840000, snapp_deposit: 260000, snapp_fee_clamped: false } },
     { d: 'M6) تخفیف فرد ۵۰٬۰۰۱ نصف‌نصف، پست', in: { shipping_method: 'post', discount: 50001, discount_bearer: 'split' },
-      exp: { net: 599999, snapp_charge: 375000, cash_charge: 464999, customer_total: 839999,
-             payout: 789999, owe: 665000, h_share: 124999, snapp_deposit: 325000 } },
+      exp: { net: 599999, snapp_fee: 50000, snapp_charge: 325000, cash_charge: 514999, customer_total: 839999,
+             payout: 789999, owe: 665000, h_share: 124999, snapp_deposit: 275000, snapp_fee_clamped: false } },
+    { d: 'M7) هشدار clamp: S=۶٬۰۰۰ → کارمزد صفر', in: { snapp_part: 6000 },
+      exp: { snapp_fee: 0, snapp_charge: 6000, cash_charge: 644000, customer_total: 650000, payout: 650000, snapp_deposit: 6000,
+             snapp_fee_clamped: true } },
+    { d: 'M8) هشدار clamp: S=۲٬۰۰۰ → کارمزد صفر', in: { snapp_part: 2000 },
+      exp: { snapp_fee: 0, snapp_charge: 2000, cash_charge: 648000, customer_total: 650000, payout: 650000, snapp_deposit: 2000,
+             snapp_fee_clamped: true } },
     { d: 'M9) واحد ۳۵۰٬۰۰۰، پست، S=۱۰۰٬۰۰۰', in: { items: [{ qty: 1, base: 200000, hp: 150000 }], shipping_method: 'post', snapp_part: 100000 },
-      exp: { net: 350000, snapp_part: 100000, snapp_charge: 115000, cash_charge: 440000,
-             customer_total: 555000, payout: 540000, owe: 390000, h_share: 150000, snapp_deposit: 100000 } },
-    { d: 'M7) هشدار: S=۶٬۰۰۰ → شارژ ۵٬۰۰۰ کمتر از تسویه', in: { snapp_part: 6000 },
-      exp: { snapp_charge: 5000, cash_charge: 644000, customer_total: 649000, snapp_deposit: 6000,
-             snapp_fee: -1000, snapp_below_deposit: true } },
-    { d: 'M8) خطا: S=۲٬۰۰۰ → شارژ صفر پس از گرد', in: { snapp_part: 2000 },
-      expectError: 'مبلغ اسنپ‌پی خیلی کم است؛ بعد از گرد کردن صفر می‌شود' },
+      exp: { net: 350000, snapp_part: 100000, snapp_fee: 15000, snapp_charge: 100000, cash_charge: 455000,
+             customer_total: 555000, payout: 540000, owe: 390000, h_share: 150000, snapp_deposit: 85000, snapp_fee_clamped: false } },
     { d: 'خطا: S=۰', in: { snapp_part: 0 },
       expectError: 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد' },
     { d: 'خطا: S = net', in: { snapp_part: 650000 },
@@ -595,12 +608,16 @@
       expectError: 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد' },
     { d: 'خطا: S=−۵', in: { snapp_part: -5 },
       expectError: 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد' },
+    { d: 'خطا: کارمزد >= S (ضریب ۲)', in: { snapp_multiplier: 2, snapp_part: 100000 },
+      expectError: 'کارمزد اسنپ‌پی از مبلغ اسنپ‌پی بیشتر می‌شود؛ ضریب را بررسی کنید' },
     { d: 'خطا: نقدی با snapp_part', in: { payment_method: 'cash' },
       expectError: 'مبلغ اسنپ‌پی فقط برای پرداخت ترکیبی است' },
     { d: 'خطا: اسنپ‌پی با snapp_part', in: { payment_method: 'snapp' },
       expectError: 'مبلغ اسنپ‌پی فقط برای پرداخت ترکیبی است' },
     { d: 'خطا: تخفیف ۱۰۰٬۰۰۰ + S=۶۰۰٬۰۰۰ روی net=۵۵۰٬۰۰۰', in: { discount: 100000, snapp_part: 600000 },
-      expectError: 'مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید' }
+      expectError: 'مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید' },
+    { d: 'خطا: تخفیف بیشتر از کالا', in: { discount: 700000, snapp_part: 100000 },
+      expectError: 'تخفیف از مبلغ کالاها بیشتر است' }
   ];
 
   MIXED.forEach(function (c, i) {
@@ -618,8 +635,12 @@
         checks.push({ k: k, ok: got[k] === c.exp[k], exp: c.exp[k], got: got[k] });
       });
       checks.push({ k: 'invariant', ok: got.invariant_ok === true, exp: true, got: got.invariant_ok });
-      var belowExp = c.exp.snapp_below_deposit === true;
-      checks.push({ k: 'below_flag', ok: got.snapp_below_deposit === belowExp, exp: belowExp, got: got.snapp_below_deposit });
+      var clampExp = c.exp.snapp_fee_clamped === true;
+      checks.push({ k: 'clamped_flag', ok: (got.snapp_fee_clamped === true) === clampExp, exp: clampExp, got: got.snapp_fee_clamped });
+      if (got.payment_method === 'mixed') {
+        checks.push({ k: 'charge===S', ok: got.snapp_charge === got.snapp_part, exp: got.snapp_part, got: got.snapp_charge });
+        checks.push({ k: 'total=payout+fee', ok: got.customer_total === got.payout + got.snapp_fee, exp: got.payout + got.snapp_fee, got: got.customer_total });
+      }
     }
 
     var allOk = checks.every(function (x) { return x.ok; });
@@ -646,8 +667,8 @@
     mxBody.appendChild(tr);
   });
 
-  /* old 13 examples now assert all three invariants too */
-  addExtra('کهنه‌ها: هر سه ثابت برای هر ۱۳ مثال برقرار است', function () {
+  /* old 13 examples now assert all four invariants too */
+  addExtra('کهنه‌ها: هر چهار ثابت برای هر ۱۳ مثال برقرار است', function () {
     var bad = [];
     CASES.forEach(function (c) {
       if (c.expectError) return;
@@ -656,13 +677,14 @@
         if (r.snapp_charge + r.cash_charge !== r.customer_total) bad.push(c.d + ':parts');
         if (r.snapp_deposit + r.cash_charge !== r.payout) bad.push(c.d + ':deposit');
         if (r.owe + r.h_share !== r.payout) bad.push(c.d + ':shares');
+        if (r.payment_method === 'mixed' && r.customer_total !== r.payout + r.snapp_fee) bad.push(c.d + ':fee');
       } catch (e) { bad.push(c.d + ':' + e.message); }
     });
     return bad.length === 0 ? true : bad.join(', ');
   });
 
   /* deterministic 5000-combo sweep over all three methods */
-  addExtra('ترکیبی: ۵٬۰۰۰ ترکیب قطعی، هر سه ثابت', function () {
+  addExtra('ترکیبی: ۵٬۰۰۰ ترکیب قطعی، هر چهار ثابت + charge===S', function () {
     var seed = 14050507;
     function rnd() {
       seed = (seed * 1103515245 + 12345) % 2147483648;
@@ -697,16 +719,19 @@
       var r;
       try { r = Calc.calcOrder(o); }
       catch (e) {
-        /* correct rejections, not sweep failures — skip the combo:
-           mahdi-bearer discount bigger than the shop goods, or a Snapp part
-           so small it rounds to zero */
+        /* correct rejections, not sweep failures — skip the combo */
         if (e.message === 'تخفیف بر عهده مغازه از مبلغ کالاهای مغازه بیشتر است' ||
-            e.message === 'مبلغ اسنپ‌پی خیلی کم است؛ بعد از گرد کردن صفر می‌شود') continue;
+            e.message === 'کارمزد اسنپ‌پی از مبلغ اسنپ‌پی بیشتر می‌شود؛ ضریب را بررسی کنید') continue;
         return 'combo ' + i + ' threw: ' + e.message;
       }
       if (r.snapp_charge + r.cash_charge !== r.customer_total) return 'combo ' + i + ': parts';
       if (r.snapp_deposit + r.cash_charge !== r.payout) return 'combo ' + i + ': deposit';
       if (r.owe + r.h_share !== r.payout) return 'combo ' + i + ': shares';
+      if (r.payment_method === 'mixed') {
+        if (r.snapp_charge !== r.snapp_part) return 'combo ' + i + ': charge!==S';
+        if (r.customer_total !== r.payout + r.snapp_fee) return 'combo ' + i + ': fee';
+        if (r.snapp_deposit !== r.snapp_part - r.snapp_fee) return 'combo ' + i + ': deposit2';
+      }
       if (r.invariant_ok !== true) return 'combo ' + i + ': flag';
     }
     return true;
@@ -742,12 +767,23 @@
     var s = Calc.calcOrder(mixedBase({ payment_method: 'snapp', snapp_part: undefined }));
     var c = Calc.calcOrder(mixedBase({ payment_method: 'cash', snapp_part: undefined }));
     function row(r) {
-      return { method: r.payment_method, payout: r.payout, snapp_part: r.snapp_part };
+      return { method: r.payment_method, payout: r.payout, snapp_part: r.snapp_part, snapp_fee: r.snapp_fee, snapp_deposit: r.snapp_deposit };
     }
-    if (Calc.snappDeposit(row(m)) !== 325000) return 'mixed=' + Calc.snappDeposit(row(m));
+    if (Calc.snappDeposit(row(m)) !== m.snapp_deposit) return 'mixed=' + Calc.snappDeposit(row(m)) + ' exp=' + m.snapp_deposit;
     if (Calc.snappDeposit(row(s)) !== s.payout) return 'snapp=' + Calc.snappDeposit(row(s));
     if (Calc.snappDeposit(row(c)) !== 0) return 'cash=' + Calc.snappDeposit(row(c));
     if (Calc.snappDeposit(null) !== 0) return 'null';
+    /* stored column wins over recomputation */
+    if (Calc.snappDeposit({ method: 'mixed', snapp_part: 325000, snapp_fee: 50000, snapp_deposit: 275000 }) !== 275000) return 'stored-column';
+    return true;
+  });
+
+  /* OWNER regression: Snapp charge is exactly S, fee lives in cash */
+  addExtra('OWNER: اسنپ‌پی مشتری دقیقاً ۵٬۰۰۰٬۰۰۰', function () {
+    var r = Calc.calcOrder(mixedBase({ items: [{ qty: 1, base: 8000000, hp: 2000000 }], snapp_part: 5000000 }));
+    if (r.snapp_charge !== 5000000) return 'charge=' + r.snapp_charge;
+    if (r.snapp_fee !== 750000) return 'fee=' + r.snapp_fee;
+    if (r.cash_charge !== 5750000) return 'cash=' + r.cash_charge;
     return true;
   });
 
@@ -797,6 +833,103 @@
       tr.appendChild(td);
     });
     mxBody.appendChild(tr);
+  });
+
+  /* ---------- section ۶: admin client helpers (part B) -------------- */
+  var adBody = document.querySelector('#admin tbody');
+
+  function addAdmin(name, fn) {
+    var ok = false, detail = '';
+    try {
+      var r = fn();
+      if (r === true) { ok = true; } else { detail = String(r); }
+    } catch (e) { detail = e.message; }
+    record(name, ok, detail);
+    var tr = document.createElement('tr');
+    var td1 = document.createElement('td'); td1.textContent = String(adBody.rows.length + 1);
+    var td2 = document.createElement('td'); td2.textContent = name;
+    var td3 = document.createElement('td');
+    td3.textContent = ok ? 'PASS' : ('FAIL — ' + detail);
+    td3.className = ok ? 'pass' : 'fail';
+    tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3);
+    adBody.appendChild(tr);
+  }
+
+  /* line-list totals: admin overrides the price snapshot per line */
+  addAdmin('ادمین: بازنویسی قیمت ردیف (base 8M + hp 2M)', function () {
+    var r = Calc.calcOrder({
+      items: [{ qty: 1, base: 8000000, hp: 2000000 }],
+      discount: 0, discount_bearer: 'helia',
+      shipping_method: 'courier', payment_method: 'cash',
+      post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000
+    });
+    if (r.customer_total !== 10000000 || r.owe !== 8000000 || r.h_share !== 2000000) {
+      return 'total=' + r.customer_total + ' owe=' + r.owe + ' h=' + r.h_share;
+    }
+    return true;
+  });
+  addAdmin('ادمین: تغییر cash → mixed همان اعداد A3 (OWNER)', function () {
+    var r = Calc.calcOrder({
+      items: [{ qty: 1, base: 8000000, hp: 2000000 }],
+      discount: 0, discount_bearer: 'helia',
+      shipping_method: 'courier', payment_method: 'mixed',
+      post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000,
+      snapp_part: 5000000
+    });
+    if (r.snapp_charge !== 5000000 || r.cash_charge !== 5750000 || r.snapp_deposit !== 4250000) {
+      return 'charge=' + r.snapp_charge + ' cash=' + r.cash_charge + ' dep=' + r.snapp_deposit;
+    }
+    if (!r.invariant_ok) return 'invariant flag';
+    return true;
+  });
+  addAdmin('ادمین: ردیف چندتایی (۲ × همان کالا + تخفیف نصف‌نصف)', function () {
+    var r = Calc.calcOrder({
+      items: [{ qty: 2, base: 500000, hp: 150000 }],
+      discount: 50000, discount_bearer: 'split',
+      shipping_method: 'post', payment_method: 'cash',
+      post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000
+    });
+    /* sub 1300000 - 50000 = 1250000, payout 1440000, owe 1165000, h 275000 */
+    if (r.customer_total !== 1440000 || r.owe !== 1165000 || r.h_share !== 275000) {
+      return 'total=' + r.customer_total + ' owe=' + r.owe + ' h=' + r.h_share;
+    }
+    return true;
+  });
+  addAdmin('ادمین: تعداد صفر در ردیف → خطا', function () {
+    try {
+      Calc.calcOrder({
+        items: [{ qty: 0, base: 500000, hp: 150000 }], discount: 0, discount_bearer: 'helia',
+        shipping_method: 'courier', payment_method: 'cash',
+        post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000
+      });
+      return 'no error';
+    } catch (e) {
+      return e.message === 'تعداد باید حداقل ۱ باشد' ? true : e.message;
+    }
+  });
+  addAdmin('قانون تایپ «حذف»: فقط خود کلمه (با فاصله مجاز)', function () {
+    if (typeof UI.isDeleteConfirm !== 'function') return 'UI.isDeleteConfirm missing';
+    if (UI.isDeleteConfirm('حذف') !== true) return 'exact';
+    if (UI.isDeleteConfirm('  حذف  ') !== true) return 'padded';
+    if (UI.isDeleteConfirm('حذف ') !== true) return 'trailing';
+    if (UI.isDeleteConfirm('') !== false) return 'empty';
+    if (UI.isDeleteConfirm('حذفف') !== false) return 'extra char';
+    if (UI.isDeleteConfirm('delete') !== false) return 'latin';
+    if (UI.isDeleteConfirm(null) !== false) return 'null';
+    return true;
+  });
+  addAdmin('ادمین: اسنپ‌شات خود سفارش (mult 1.2) نه تنظیمات سراسری', function () {
+    var r = Calc.calcOrder({
+      items: [{ qty: 1, base: 500000, hp: 150000 }],
+      discount: 0, discount_bearer: 'helia',
+      shipping_method: 'post', payment_method: 'mixed',
+      post_fee: 190000, snapp_multiplier: 1.2, rounding_step: 5000,
+      snapp_part: 325000
+    });
+    if (r.snapp_fee !== 65000 || r.snapp_deposit !== 260000) {
+      return 'fee=' + r.snapp_fee + ' dep=' + r.snapp_deposit;
+    }
+    return true;
   });
 
   var box = document.getElementById('summary');

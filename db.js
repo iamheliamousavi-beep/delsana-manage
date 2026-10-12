@@ -214,7 +214,7 @@
       'id, created_at, customer, phone, address, postal_code, items, method, shipping_method, ' +
       'shipping_fee, snapp_multiplier, rounding_step, discount, discount_bearer, mahdi_discount, ' +
       'helia_discount, total, owe, h_share, payout, status, status_history, tracking, note, ' +
-      'pinned, pin_note, pinned_at, snapp_part, snapp_charge, cash_charge',
+      'pinned, pin_note, pinned_at, snapp_part, snapp_charge, cash_charge, snapp_fee, snapp_deposit',
       'created_at', false
     );
     App.orders = orders;
@@ -289,6 +289,44 @@
   DB.bulkStatus = async function (ids, target) {
     var n = await DB.rpc('bulk_set_status', { p_order_ids: ids, p_target: target });
     return n || 0;
+  };
+
+  /* --------------------------------------------------- admin (part B) */
+  /* Admin-only RPCs (migration 010). The server enforces is_admin(); the UI
+     only hides the buttons. After every mutation the caller reloads. */
+  DB.adminUpdateOrder = async function (id, data) {
+    return DB.rpc('admin_update_order', { p_order_id: id, p_data: data });
+  };
+
+  DB.adminDeleteOrder = async function (id) {
+    await DB.rpc('admin_delete_order', { p_order_id: id });
+  };
+
+  DB.adminUpdateProduct = async function (id, data) {
+    await DB.rpc('admin_update_product', { p_id: id, p_data: data });
+    await DB.loadProducts();
+  };
+
+  DB.adminDeleteProduct = async function (id) {
+    var res = await DB.rpc('admin_delete_product', { p_id: id });
+    await DB.loadProducts();
+    return res;
+  };
+
+  DB.adminRestoreOrder = async function (auditId) {
+    var id = await DB.rpc('admin_restore_order', { p_audit_id: auditId });
+    await DB.loadOrders();
+    return id;
+  };
+
+  DB.adminRestoreProduct = async function (auditId) {
+    var id = await DB.rpc('admin_restore_product', { p_audit_id: auditId });
+    await DB.loadProducts();
+    return id;
+  };
+
+  DB.adminListAudit = async function (limit) {
+    return DB.rpc('admin_list_audit', { p_limit: limit || 100 });
   };
 
   /* --------------------------------------------------- notifications (9.5) */
