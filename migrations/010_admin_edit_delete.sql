@@ -251,13 +251,15 @@ begin
   select to_jsonb(x) into v_after from public.orders x where x.id = p_order_id;
 
   -- changed-field list: every patched key + every derived column that moved
+  -- (array_append with an explicit cast: `arr || 'literal'` misresolves the
+  -- unknown literal to text[] on some servers -> "malformed array literal")
   for v_key in select jsonb_object_keys(p_data) loop
-    v_changed := v_changed || v_key;
+    v_changed := array_append(v_changed, v_key);
   end loop;
-  if (v_after->>'total')::bigint is distinct from o.total then v_changed := v_changed || 'total'; end if;
-  if (v_after->>'payout')::bigint is distinct from o.payout then v_changed := v_changed || 'payout'; end if;
-  if (v_after->>'owe')::bigint is distinct from o.owe then v_changed := v_changed || 'owe'; end if;
-  if (v_after->>'h_share')::bigint is distinct from o.h_share then v_changed := v_changed || 'h_share'; end if;
+  if (v_after->>'total')::bigint is distinct from o.total then v_changed := array_append(v_changed, 'total'::text); end if;
+  if (v_after->>'payout')::bigint is distinct from o.payout then v_changed := array_append(v_changed, 'payout'::text); end if;
+  if (v_after->>'owe')::bigint is distinct from o.owe then v_changed := array_append(v_changed, 'owe'::text); end if;
+  if (v_after->>'h_share')::bigint is distinct from o.h_share then v_changed := array_append(v_changed, 'h_share'::text); end if;
 
   insert into public.audit_log (actor, entity, entity_id, action, before, after)
   values (auth.uid(), 'order', p_order_id, 'edit', to_jsonb(o), v_after);
