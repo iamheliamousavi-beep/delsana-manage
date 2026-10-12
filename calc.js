@@ -1,17 +1,20 @@
 /* calc.js — the single source of truth for all money calculations.
    Pure functions, integers only (toman). The only float allowed is the
    Snapp multiplier, which is applied and then rounded to rounding_step.
-   The same formulas are implemented server-side in setup.sql (create_order)
-   and mirrored by tests.html.
+   The same formulas are implemented server-side in setup.sql (create_order
+   via order_amounts) and mirrored by tests.html.
 
    v2 model: a product has only `base` (shop price per unit) and `hp`
-   (page profit per unit).  There is no cost, no shop profit and no stock. */
+   (page profit per unit).  There is no cost, no shop profit and no stock.
+   v3 model: adds the `mixed` payment method (part Snapp Pay + part cash).
+   Cash and snapp results are byte-for-byte identical to v2. */
 (function (root) {
   'use strict';
 
   var BEARERS = ['helia', 'mahdi', 'split'];
   var SHIPPING = ['post', 'courier'];
-  var METHODS = ['cash', 'snapp'];
+  var METHODS = ['cash', 'snapp', 'mixed'];
+  var MAX_SAFE = 9007199254740991;
 
   /* Float-safe rounding to a step.
      Without the 1e-9 nudge a value that should land exactly on a .5
@@ -22,6 +25,73 @@
     if (!isFinite(x)) throw new Error('roundToStep: مقدار عدد نیست');
     var s = Math.floor(Math.abs(step)) > 0 ? Math.floor(Math.abs(step)) : 1;
     return Math.round(x / s + 1e-9) * s;
+  }
+
+  /* Exact snapp rounding: round(amount × multiplier / step) × step, half up
+     for positives — identical to Postgres round(amount × mult / step) × step.
+     The multiplier is converted to an exact rational from its DECIMAL STRING
+     (String(mult)), never from float arithmetic, so 1.15 is exactly 115/100.
+     (String(1.15) === "1.15": shortest-round-trip printing recovers the
+     decimals the value was created from; both JS and Postgres parse the same
+     JSON decimal text, so both sides compute the same integers.)
+     Parsed rationals are cached: same input string always hits the same entry. */
+  var multCache = {};
+  function parseMultiplierRational(mult) {
+    var key = String(mult);
+    if (multCache[key]) return multCache[key];
+    var n = Number(mult);
+    if (!isFinite(n) || n <= 0 || n > 10) throw new Error('ضریب اسنپ‌پی نامعتبر است');
+    var m = /^(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(String(mult).trim());
+    if (!m) throw new Error('ضریب اسنپ‌پی نامعتبر است');
+    var digits = m[1] + (m[2] || '');
+    var a = BigInt(digits);
+    var b = 10n ** BigInt((m[2] || '').length);
+    var exp = m[3] ? parseInt(m[3], 10) : 0;
+    if (exp > 0) a = a * (10n ** BigInt(exp));
+    else if (exp < 0) b = b * (10n ** BigInt(-exp));
+    if (a <= 0n) throw new Error('ضریب اسنپ‌پی نامعتبر است');
+    var r = { a: a, b: b };
+    multCache[key] = r;
+    return r;
+  }
+
+  function snappRound(amount, multiplier, step) {
+    var n = Number(amount);
+    if (!isFinite(n) || Math.floor(n) !== n || n < 0 || n > MAX_SAFE) {
+      throw new Error('snappRound: مقدار باید عدد صحیح نامنفی باشد');
+    }
+    var s = Math.floor(Number(step));
+    if (!isFinite(s) || s <= 0) throw new Error('گرد کردن باید عدد مثبت باشد');
+    var r = parseMultiplierRational(multiplier);
+    /* floor((2·n·a + b·s) / (2·b·s)) · s: exact round-half-up for positives.
+       Always BigInt — exact at every magnitude, no float floor hazard. */
+    var q = (2n * BigInt(n) * r.a + r.b * BigInt(s)) / (2n * r.b * BigInt(s));
+    return Number(q * BigInt(s));
+  }
+
+  /* Persian/Arabic digits -> ASCII (calc.js stays dependency-free). */
+  var FA_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
+  var AR_DIGITS = '٠١٢٣٤٥٦٧٨٩';
+  function toEnDigits(s) {
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/[۰-۹]/g, function (d) { return String(FA_DIGITS.indexOf(d)); })
+      .replace(/[٠-٩]/g, function (d) { return String(AR_DIGITS.indexOf(d)); });
+  }
+
+  var SNAPP_PART_MSG = 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد';
+  /* Parse the raw Snapp-part input (single source of truth for the rule in
+     the new-order form AND the tests): Persian/Arabic digits, thousand
+     separators and a trailing-dash minus are accepted; a fractional value
+     (1.5, ۵٫۵) is an error, never silently truncated. Throws SNAPP_PART_MSG. */
+  function parseSnappPart(text) {
+    if (text === null || text === undefined) throw new Error(SNAPP_PART_MSG);
+    var t = toEnDigits(text).replace(/[\u2212\u2013\u2014]/g, '-').replace(/[\s,٬]/g, '');
+    var m = /^(-?)(\d+)(?:[\.\u066B](\d+))?$/.exec(t);
+    if (!m) throw new Error(SNAPP_PART_MSG);
+    if (m[3] && !/^0+$/.test(m[3])) throw new Error(SNAPP_PART_MSG);
+    var v = Number((m[1] || '') + m[2]);
+    if (!isFinite(v) || v < 1 || v > MAX_SAFE) throw new Error(SNAPP_PART_MSG);
+    return v;
   }
 
   /* Split the discount between the two partners.
@@ -41,8 +111,9 @@
        items: [{ qty, base, hp }]      (order snapshots)
        discount, discount_bearer
        shipping_method: 'post'|'courier'
-       payment_method:  'cash'|'snapp'
+       payment_method:  'cash'|'snapp'|'mixed'
        post_fee, snapp_multiplier, rounding_step      (settings/snapshot values)
+       snapp_part: the Snapp side S (mixed only; cash/snapp must send null/0)
      returns every derived amount as integers. */
   function calcOrder(inp) {
     if (!inp || !Array.isArray(inp.items)) throw new Error('لیست کالاها الزامی است');
@@ -83,14 +154,43 @@
     var shipping_fee = ship === 'post' ? postFee : 0;
     var net = sub - discount;
 
-    var customer_total;
-    if (method === 'snapp') {
-      customer_total = roundToStep(net * mult, step) + shipping_fee;
-    } else {
-      customer_total = net + shipping_fee;
+    /* A Snapp part on a cash/snapp order is rejected, never ignored. */
+    var sRaw = inp.snapp_part;
+    var sProvided = !(sRaw === undefined || sRaw === null || sRaw === '' || Number(sRaw) === 0);
+    if (method !== 'mixed' && sProvided) {
+      throw new Error('مبلغ اسنپ‌پی فقط برای پرداخت ترکیبی است');
     }
+
     /* Snapp Pay settles the same amount a cash sale would produce. */
     var payout = net + shipping_fee;
+
+    var customer_total;
+    var snapp_part = 0, snapp_charge = 0, cash_charge = 0;
+    var snapp_deposit = 0, snapp_fee = 0, snapp_below_deposit = false;
+    if (method === 'mixed') {
+      var S = parseSnappPart(sRaw);
+      if (S >= net) {
+        throw new Error('مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید');
+      }
+      snapp_part = S;
+      snapp_charge = snappRound(S, mult, step);
+      if (snapp_charge <= 0) {
+        throw new Error('مبلغ اسنپ‌پی خیلی کم است؛ بعد از گرد کردن صفر می‌شود');
+      }
+      cash_charge = (net - S) + shipping_fee;
+      customer_total = snapp_charge + cash_charge;
+      snapp_deposit = S;
+      snapp_fee = snapp_charge - S;
+      snapp_below_deposit = snapp_charge < S;
+    } else if (method === 'snapp') {
+      customer_total = roundToStep(net * mult, step) + shipping_fee;
+      snapp_charge = customer_total;
+      snapp_deposit = payout;
+      snapp_fee = customer_total - payout;
+    } else {
+      customer_total = net + shipping_fee;
+      cash_charge = customer_total;
+    }
 
     var goods_owe = baseSum - mahdi_discount;
     if (goods_owe < 0) {
@@ -99,9 +199,15 @@
     var owe = goods_owe + shipping_fee;
     var h_share = hpSum - helia_discount;
 
-    /* invariant, asserted here and in tests.html: every toman of the payout
-       is either owed to the shop or kept by the page */
-    if ((owe + h_share) !== payout) {
+    /* invariants, asserted here and in tests.html:
+       every toman of the payout is owed either to the shop or kept by the
+       page; what the customer pays splits exactly into Snapp + cash parts;
+       what the page ends up holding (Snapp deposit + cash in hand) is the
+       payout. All three hold for every method. */
+    var invariant_ok = (owe + h_share) === payout &&
+                       (snapp_charge + cash_charge) === customer_total &&
+                       (snapp_deposit + cash_charge) === payout;
+    if (!invariant_ok) {
       throw new Error('خطای محاسباتی داخلی: پرداختی برابر با سهم‌ها نیست');
     }
 
@@ -121,11 +227,28 @@
       payout: payout,
       owe: owe,
       h_share: h_share,
-      /* invariant: every toman of the payout is owed either to the shop or kept by the page */
-      invariant_ok: (owe + h_share) === payout,
-      /* warning only — never blocks the user */
-      negative_helia_share: h_share < 0
+      snapp_part: snapp_part,
+      snapp_charge: snapp_charge,
+      cash_charge: cash_charge,
+      snapp_deposit: snapp_deposit,
+      snapp_fee: snapp_fee,
+      /* all three invariants above hold */
+      invariant_ok: invariant_ok,
+      /* warnings only — never block the user */
+      negative_helia_share: h_share < 0,
+      snapp_below_deposit: snapp_below_deposit
     };
+  }
+
+  /* One definition of the Snapp settlement for a stored order row
+     (Accounts / Reports / Invoice all use this): cash -> 0,
+     snapp -> payout, mixed -> snapp_part. */
+  function snappDeposit(order) {
+    if (!order) return 0;
+    var m = order.payment_method || order.method || 'cash';
+    if (m === 'mixed') return Math.floor(Number(order.snapp_part) || 0);
+    if (m === 'snapp') return Math.floor(Number(order.payout) || 0);
+    return 0;
   }
 
   /* Price a single unit for the product cards (no shipping, no discount). */
@@ -146,13 +269,16 @@
   }
 
   var Calc = {
-    VERSION: 2,
+    VERSION: 3,
     BEARERS: BEARERS,
     SHIPPING: SHIPPING,
     METHODS: METHODS,
     roundToStep: roundToStep,
+    snappRound: snappRound,
+    parseSnappPart: parseSnappPart,
     splitDiscount: splitDiscount,
     calcOrder: calcOrder,
+    snappDeposit: snappDeposit,
     unitPrices: unitPrices
   };
 

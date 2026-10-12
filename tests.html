@@ -64,6 +64,18 @@
   <tbody></tbody>
 </table>
 
+<h2>۵) پرداخت ترکیبی (mixed — اسنپ‌پی + نقدی)</h2>
+<p class="inv">مثال‌های M1 تا M9 از پرامپت پرداخت ترکیبی + پرچم هشدار + حالت‌های خطا. هر مثال هر سه ثابت را هم بررسی می‌کند.</p>
+<table id="mixed">
+  <thead>
+    <tr>
+      <th>#</th><th>شرح</th><th>اسنپ‌پی (مشتری)</th><th>نقدی (مشتری)</th>
+      <th>کل مشتری</th><th>تسویه اسنپ‌پی</th><th>نتیجه</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
 <script src="calc.js"></script>
 <script src="ui.js"></script>
 <script src="postimport.js"></script>
@@ -531,6 +543,245 @@
       return m.verdict === 'green' && m.candidates[0].city_score === 2 ? true : m.verdict;
     });
   }
+
+  /* ---------- section ۵: mixed payment (prompt v3) ---------------------- */
+  var mxBody = document.querySelector('#mixed tbody');
+
+  function mixedBase(extra) {
+    var o = {
+      items: [{ qty: 1, base: 500000, hp: 150000 }],
+      discount: 0, discount_bearer: 'helia',
+      shipping_method: 'courier', payment_method: 'mixed',
+      post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000,
+      snapp_part: 325000
+    };
+    if (extra) for (var k in extra) o[k] = extra[k];
+    return o;
+  }
+
+  var MIXED = [
+    { d: 'M1) ترکیبی، پیک، بدون تخفیف', in: {},
+      exp: { net: 650000, snapp_part: 325000, snapp_charge: 375000, cash_charge: 325000,
+             customer_total: 700000, payout: 650000, owe: 500000, h_share: 150000,
+             snapp_deposit: 325000, snapp_fee: 50000 } },
+    { d: 'M2) ترکیبی، پست، بدون تخفیف', in: { shipping_method: 'post' },
+      exp: { snapp_charge: 375000, cash_charge: 515000, customer_total: 890000,
+             payout: 840000, owe: 690000, h_share: 150000, snapp_deposit: 325000 } },
+    { d: 'M3) ترکیبی، پست، تخفیف ۵۰٬۰۰۰ نصف‌نصف', in: { shipping_method: 'post', discount: 50000, discount_bearer: 'split', snapp_part: 300000 },
+      exp: { net: 600000, snapp_part: 300000, snapp_charge: 345000, cash_charge: 490000,
+             customer_total: 835000, payout: 790000, owe: 665000, h_share: 125000, snapp_deposit: 300000 } },
+    { d: 'M4) مرز گرد: ۳۵۰٬۰۰۰ × ۱٫۱۵ → ۴۰۵٬۰۰۰', in: { snapp_part: 350000 },
+      exp: { snapp_charge: 405000, cash_charge: 300000, customer_total: 705000, snapp_deposit: 350000 } },
+    { d: 'M5) ضریب ۱٫۲، پست', in: { shipping_method: 'post', snapp_multiplier: 1.2 },
+      exp: { snapp_charge: 390000, cash_charge: 515000, customer_total: 905000, snapp_deposit: 325000 } },
+    { d: 'M6) تخفیف فرد ۵۰٬۰۰۱ نصف‌نصف، پست', in: { shipping_method: 'post', discount: 50001, discount_bearer: 'split' },
+      exp: { net: 599999, snapp_charge: 375000, cash_charge: 464999, customer_total: 839999,
+             payout: 789999, owe: 665000, h_share: 124999, snapp_deposit: 325000 } },
+    { d: 'M9) واحد ۳۵۰٬۰۰۰، پست، S=۱۰۰٬۰۰۰', in: { items: [{ qty: 1, base: 200000, hp: 150000 }], shipping_method: 'post', snapp_part: 100000 },
+      exp: { net: 350000, snapp_part: 100000, snapp_charge: 115000, cash_charge: 440000,
+             customer_total: 555000, payout: 540000, owe: 390000, h_share: 150000, snapp_deposit: 100000 } },
+    { d: 'M7) هشدار: S=۶٬۰۰۰ → شارژ ۵٬۰۰۰ کمتر از تسویه', in: { snapp_part: 6000 },
+      exp: { snapp_charge: 5000, cash_charge: 644000, customer_total: 649000, snapp_deposit: 6000,
+             snapp_fee: -1000, snapp_below_deposit: true } },
+    { d: 'M8) خطا: S=۲٬۰۰۰ → شارژ صفر پس از گرد', in: { snapp_part: 2000 },
+      expectError: 'مبلغ اسنپ‌پی خیلی کم است؛ بعد از گرد کردن صفر می‌شود' },
+    { d: 'خطا: S=۰', in: { snapp_part: 0 },
+      expectError: 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد' },
+    { d: 'خطا: S = net', in: { snapp_part: 650000 },
+      expectError: 'مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید' },
+    { d: 'خطا: S > net', in: { snapp_part: 650001 },
+      expectError: 'مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید' },
+    { d: 'خطا: S=۱٫۵ (اعشاری)', in: { snapp_part: 1.5 },
+      expectError: 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد' },
+    { d: 'خطا: S=−۵', in: { snapp_part: -5 },
+      expectError: 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد' },
+    { d: 'خطا: نقدی با snapp_part', in: { payment_method: 'cash' },
+      expectError: 'مبلغ اسنپ‌پی فقط برای پرداخت ترکیبی است' },
+    { d: 'خطا: اسنپ‌پی با snapp_part', in: { payment_method: 'snapp' },
+      expectError: 'مبلغ اسنپ‌پی فقط برای پرداخت ترکیبی است' },
+    { d: 'خطا: تخفیف ۱۰۰٬۰۰۰ + S=۶۰۰٬۰۰۰ روی net=۵۵۰٬۰۰۰', in: { discount: 100000, snapp_part: 600000 },
+      expectError: 'مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید' }
+  ];
+
+  MIXED.forEach(function (c, i) {
+    var got = null, err = null;
+    try { got = Calc.calcOrder(mixedBase(c.in)); } catch (e) { err = e; }
+
+    var checks = [];
+    if (c.expectError) {
+      checks.push({ k: 'خطا', ok: !!err && err.message === c.expectError,
+        exp: c.expectError, got: err ? err.message : '(بدون خطا)' });
+    } else if (err) {
+      checks.push({ k: 'بدون خطا', ok: false, exp: '', got: err.message });
+    } else {
+      Object.keys(c.exp).forEach(function (k) {
+        checks.push({ k: k, ok: got[k] === c.exp[k], exp: c.exp[k], got: got[k] });
+      });
+      checks.push({ k: 'invariant', ok: got.invariant_ok === true, exp: true, got: got.invariant_ok });
+      var belowExp = c.exp.snapp_below_deposit === true;
+      checks.push({ k: 'below_flag', ok: got.snapp_below_deposit === belowExp, exp: belowExp, got: got.snapp_below_deposit });
+    }
+
+    var allOk = checks.every(function (x) { return x.ok; });
+    record(c.d, allOk, allOk ? '' : checks.filter(function (x) { return !x.ok; })
+      .map(function (x) { return x.k + ' exp=' + x.exp + ' got=' + x.got; }).join(' | '));
+
+    var tr = document.createElement('tr');
+    var cells = [
+      String(i + 1),
+      c.d,
+      (!got || err) ? '—' : String(got.snapp_charge),
+      (!got || err) ? '—' : String(got.cash_charge),
+      (!got || err) ? '—' : String(got.customer_total),
+      (!got || err) ? '—' : String(got.snapp_deposit),
+      allOk ? 'PASS' : 'FAIL — ' + checks.filter(function (x) { return !x.ok; })
+        .map(function (x) { return x.k + ' exp=' + x.exp + ' got=' + x.got; }).join(' | ')
+    ];
+    cells.forEach(function (t, idx) {
+      var td = document.createElement('td');
+      td.textContent = t;
+      if (idx === cells.length - 1) td.className = allOk ? 'pass' : 'fail';
+      tr.appendChild(td);
+    });
+    mxBody.appendChild(tr);
+  });
+
+  /* old 13 examples now assert all three invariants too */
+  addExtra('کهنه‌ها: هر سه ثابت برای هر ۱۳ مثال برقرار است', function () {
+    var bad = [];
+    CASES.forEach(function (c) {
+      if (c.expectError) return;
+      try {
+        var r = Calc.calcOrder(make(c.in));
+        if (r.snapp_charge + r.cash_charge !== r.customer_total) bad.push(c.d + ':parts');
+        if (r.snapp_deposit + r.cash_charge !== r.payout) bad.push(c.d + ':deposit');
+        if (r.owe + r.h_share !== r.payout) bad.push(c.d + ':shares');
+      } catch (e) { bad.push(c.d + ':' + e.message); }
+    });
+    return bad.length === 0 ? true : bad.join(', ');
+  });
+
+  /* deterministic 5000-combo sweep over all three methods */
+  addExtra('ترکیبی: ۵٬۰۰۰ ترکیب قطعی، هر سه ثابت', function () {
+    var seed = 14050507;
+    function rnd() {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    }
+    function pick(arr) { return arr[Math.floor(rnd() * arr.length)]; }
+    var mults = [1.05, 1.1, 1.125, 1.15, 1.2, 1.25];
+    for (var i = 0; i < 5000; i++) {
+      var nItems = 1 + Math.floor(rnd() * 3);
+      var items = [];
+      for (var j = 0; j < nItems; j++) {
+        items.push({
+          qty: 1 + Math.floor(rnd() * 3),
+          base: pick([0, 30000, 100000, 200000, 500000]),
+          hp: pick([0, 20000, 50000, 150000, 400000])
+        });
+      }
+      var sub = items.reduce(function (a, it) { return a + it.qty * (it.base + it.hp); }, 0);
+      if (sub === 0) continue;
+      var discount = Math.floor(rnd() * (sub + 1));
+      var method = pick(['cash', 'snapp', 'mixed']);
+      var o = {
+        items: items, discount: discount, discount_bearer: pick(['helia', 'mahdi', 'split']),
+        shipping_method: pick(['post', 'courier']), payment_method: method,
+        post_fee: 190000, snapp_multiplier: pick(mults), rounding_step: 5000
+      };
+      if (method === 'mixed') {
+        var net = sub - discount;
+        if (net < 2) o.payment_method = 'cash';
+        else o.snapp_part = 1 + Math.floor(rnd() * (net - 1));
+      }
+      var r;
+      try { r = Calc.calcOrder(o); }
+      catch (e) {
+        /* correct rejections, not sweep failures — skip the combo:
+           mahdi-bearer discount bigger than the shop goods, or a Snapp part
+           so small it rounds to zero */
+        if (e.message === 'تخفیف بر عهده مغازه از مبلغ کالاهای مغازه بیشتر است' ||
+            e.message === 'مبلغ اسنپ‌پی خیلی کم است؛ بعد از گرد کردن صفر می‌شود') continue;
+        return 'combo ' + i + ' threw: ' + e.message;
+      }
+      if (r.snapp_charge + r.cash_charge !== r.customer_total) return 'combo ' + i + ': parts';
+      if (r.snapp_deposit + r.cash_charge !== r.payout) return 'combo ' + i + ': deposit';
+      if (r.owe + r.h_share !== r.payout) return 'combo ' + i + ': shares';
+      if (r.invariant_ok !== true) return 'combo ' + i + ': flag';
+    }
+    return true;
+  });
+
+  /* rounding parity: exact reference AND the existing float path agree */
+  addExtra('گرد: snappRound == مرجع BigInt == roundToStep (حلقه کامل)', function () {
+    var t0 = Date.now();
+    var mults = [1.05, 1.1, 1.125, 1.15, 1.2, 1.25];
+    var rats = mults.map(function (m) {
+      var p = String(m).split('.');
+      return { a: BigInt(p[0] + (p[1] || '')), b: 10n ** BigInt((p[1] || '').length) };
+    });
+    var checked = 0;
+    for (var mi = 0; mi < mults.length; mi++) {
+      var ra = rats[mi].a, rb = rats[mi].b;
+      for (var s = 1; s <= 3000000; s += 7) {
+        var ref = Number(((2n * BigInt(s) * ra + rb * 5000n) / (2n * rb * 5000n)) * 5000n);
+        var got = Calc.snappRound(s, mults[mi], 5000);
+        if (got !== ref) return 'S=' + s + ' m=' + mults[mi] + ' got=' + got + ' ref=' + ref;
+        var fl = Calc.roundToStep(s * mults[mi], 5000);
+        if (got !== fl) return 'S=' + s + ' m=' + mults[mi] + ' got=' + got + ' float=' + fl;
+        checked++;
+      }
+    }
+    if (Date.now() - t0 > 120000) return 'too slow: ' + (Date.now() - t0) + 'ms';
+    return true;
+  });
+
+  /* snappDeposit per method, on stored-row shape */
+  addExtra('snappDeposit: هر سه روش روی سطر ذخیره‌شده', function () {
+    var m = Calc.calcOrder(mixedBase({}));
+    var s = Calc.calcOrder(mixedBase({ payment_method: 'snapp', snapp_part: undefined }));
+    var c = Calc.calcOrder(mixedBase({ payment_method: 'cash', snapp_part: undefined }));
+    function row(r) {
+      return { method: r.payment_method, payout: r.payout, snapp_part: r.snapp_part };
+    }
+    if (Calc.snappDeposit(row(m)) !== 325000) return 'mixed=' + Calc.snappDeposit(row(m));
+    if (Calc.snappDeposit(row(s)) !== s.payout) return 'snapp=' + Calc.snappDeposit(row(s));
+    if (Calc.snappDeposit(row(c)) !== 0) return 'cash=' + Calc.snappDeposit(row(c));
+    if (Calc.snappDeposit(null) !== 0) return 'null';
+    return true;
+  });
+
+  /* Snapp-part input parsing: Persian digits, separators, 1.5 rejected */
+  [['۳۲۵٬۰۰۰', 325000], ['325,000', 325000], [' 325000 ', 325000], ['5.0', 5], ['۵٫۰', 5]
+  ].forEach(function (t, i) {
+    var got;
+    try { got = Calc.parseSnappPart(t[0]); } catch (e) { got = 'throw: ' + e.message; }
+    var ok = got === t[1];
+    record('تجزیه ' + t[0], ok, ok ? '' : 'exp=' + t[1] + ' got=' + got);
+    var tr = document.createElement('tr');
+    [String(mxBody.rows.length + 100), 'تجزیه «' + t[0] + '»', '', '', '', String(got),
+      ok ? 'PASS' : 'FAIL — exp=' + t[1] + ' got=' + got].forEach(function (x, idx, arr) {
+      var td = document.createElement('td');
+      td.textContent = x;
+      if (idx === arr.length - 1) td.className = ok ? 'pass' : 'fail';
+      tr.appendChild(td);
+    });
+    mxBody.appendChild(tr);
+  });
+  ['1.5', '۱۲٫۵', '', 'abc', '0', '-25', '۵۰۰۰−', null].forEach(function (bad) {
+    var threw = false;
+    try { Calc.parseSnappPart(bad); } catch (e) { threw = true; }
+    record('رد «' + bad + '»', threw, threw ? '' : 'accepted!');
+    var tr = document.createElement('tr');
+    [String(mxBody.rows.length + 100), 'رد «' + bad + '»', '', '', '', threw ? 'throw' : 'ACCEPTED!',
+      threw ? 'PASS' : 'FAIL'].forEach(function (x, idx, arr) {
+      var td = document.createElement('td');
+      td.textContent = x;
+      if (idx === arr.length - 1) td.className = threw ? 'pass' : 'fail';
+      tr.appendChild(td);
+    });
+    mxBody.appendChild(tr);
+  });
 
   var box = document.getElementById('summary');
   if (fail === 0) {
