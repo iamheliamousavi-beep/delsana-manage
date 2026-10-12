@@ -548,7 +548,8 @@ var Screens = (function () {
     ], 'post');
     var paySeg = segmented('no-pay', [
       { value: 'cash', label: 'نقدی / کارت' },
-      { value: 'snapp', label: 'اسنپ‌پی' }
+      { value: 'snapp', label: 'اسنپ‌پی' },
+      { value: 'mixed', label: 'ترکیبی' }
     ], 'cash');
 
     var shipCard = el('div', { class: 'card' },
@@ -559,6 +560,14 @@ var Screens = (function () {
         el('label', { for: 'no-mult', text: 'ضریب اسنپ‌پی (اختیاری)' }),
         el('input', { type: 'text', id: 'no-mult', inputmode: 'decimal', placeholder: String(App.settings.snapp_multiplier) }),
         el('p', { class: 'hint', text: 'پیش‌فرض از تنظیمات خوانده می‌شود؛ سفارش همین مقدار را ذخیره می‌کند' })),
+      el('div', { class: 'field', id: 'no-part-wrap', hidden: true },
+        el('label', { for: 'no-snapp-part', text: 'مبلغ اسنپ‌پی (تومان)' }),
+        el('input', { type: 'text', id: 'no-snapp-part', inputmode: 'numeric', placeholder: 'مثلاً ۳۲۵٬۰۰۰' }),
+        el('p', { class: 'hint', text: 'بخشی از مبلغ کالاها (پس از تخفیف) که با اسنپ‌پی پرداخت می‌شود و اسنپ‌پی به حساب پیج واریز می‌کند' }),
+        el('div', { class: 'row wrap', style: 'margin-top:6px' },
+          el('button', { class: 'btn tiny', type: 'button', text: '۲۵٪', onclick: function () { fillSnappPart(25); } }),
+          el('button', { class: 'btn tiny', type: 'button', text: '۵۰٪', onclick: function () { fillSnappPart(50); } }),
+          el('button', { class: 'btn tiny', type: 'button', text: '۷۵٪', onclick: function () { fillSnappPart(75); } }))),
       el('div', { class: 'field', id: 'no-status-wrap', hidden: false },
         el('label', { for: 'no-status', text: 'وضعیت اولیه سفارش' }),
         el('select', { id: 'no-status' },
@@ -764,9 +773,15 @@ var Screens = (function () {
     var shipping = radioValue('no-ship') || 'post';
     var bearer = radioValue('no-bearer') || 'helia';
     var mult = null;
-    if (method === 'snapp') {
+    if (method === 'snapp' || method === 'mixed') {
       var raw = UI.parseFloat10($('#no-mult') ? $('#no-mult').value : '');
       mult = raw === null ? App.settings.snapp_multiplier : raw;
+    }
+    /* raw text goes to Calc: it validates Persian digits and rejects
+       fractional input itself, so the live summary shows the same error */
+    var snappPart;
+    if (method === 'mixed') {
+      snappPart = $('#no-snapp-part') ? $('#no-snapp-part').value : '';
     }
     try {
       return Calc.calcOrder({
@@ -777,9 +792,33 @@ var Screens = (function () {
         payment_method: method,
         post_fee: App.settings.post_fee,
         snapp_multiplier: mult === null ? App.settings.snapp_multiplier : mult,
-        rounding_step: App.settings.rounding_step
+        rounding_step: App.settings.rounding_step,
+        snapp_part: snappPart
       });
     } catch (e) { return { error: e.message }; }
+  }
+
+  /* goods value after discount, for the Snapp-part helper chips (fills once,
+     never auto-updates afterwards) */
+  function mixedCartNet() {
+    var sub = 0;
+    for (var i = 0; i < neworder.cart.length; i++) {
+      var p = productById(neworder.cart[i].product_id);
+      if (!p) continue;
+      var pi = priceInfo(p);
+      sub += neworder.cart[i].qty * (pi.base + pi.hp);
+    }
+    var discount = UI.parseInt10($('#no-discount') ? $('#no-discount').value : '0') || 0;
+    return sub - discount;
+  }
+
+  function fillSnappPart(pct) {
+    var input = $('#no-snapp-part');
+    if (!input) return;
+    var net = mixedCartNet();
+    if (!(net >= 2)) { UI.toast('ابتدا کالاها و تخفیف را مشخص کنید', 'warn'); return; }
+    input.value = UI.toFaDigits(String(Math.floor(net * pct / 100)));
+    updateSummary();
   }
 
   function updateSummary() {
@@ -787,10 +826,12 @@ var Screens = (function () {
     if (!wrap) return;
 
     var multWrap = $('#no-mult-wrap');
+    var partWrap = $('#no-part-wrap');
     var statusWrap = $('#no-status-wrap');
     var bearerWrap = $('#no-bearer-wrap');
     var method = radioValue('no-pay') || 'cash';
-    if (multWrap) multWrap.hidden = method !== 'snapp';
+    if (multWrap) multWrap.hidden = method !== 'snapp' && method !== 'mixed';
+    if (partWrap) partWrap.hidden = method !== 'mixed';
     if (statusWrap) statusWrap.hidden = method !== 'cash';
     var discount = UI.parseInt10($('#no-discount') ? $('#no-discount').value : '0') || 0;
     if (bearerWrap) bearerWrap.hidden = !(discount > 0);
@@ -822,11 +863,16 @@ var Screens = (function () {
     }
     if (r.error) {
       warn.appendChild(el('div', { class: 'alert danger', text: r.error }));
+      /* a mixed order with a bad Snapp part cannot be saved until fixed */
+      if (method === 'mixed' && saveBtn) saveBtn.disabled = true;
       return;
     }
 
     if (r.negative_helia_share) {
       warn.appendChild(el('div', { class: 'alert warn', text: 'سود پیج منفی می‌شود؛ تخفیف را کم کنید' }));
+    }
+    if (r.snapp_below_deposit) {
+      warn.appendChild(el('div', { class: 'alert warn', text: 'مبلغ اسنپ‌پی مشتری کمتر از مبلغ تسویه می‌شود؛ مبلغ اسنپ‌پی را تغییر دهید' }));
     }
     if (!r.invariant_ok) {
       warn.appendChild(el('div', { class: 'alert danger', text: 'خطای محاسباتی داخلی؛ لطفاً صفحه را تازه‌سازی کنید' }));
@@ -835,13 +881,21 @@ var Screens = (function () {
     var rows = [
       ['مبلغ کالاها', UI.fmtMoney(r.sub), ''],
       ['تخفیف' + (discount > 0 ? ' (' + UI.bearerLabel(r.discount_bearer) + ')' : ''), '− ' + UI.fmtMoney(r.discount), ''],
-      ['هزینه ارسال (' + UI.shippingLabel(r.shipping_method) + ')', UI.fmtMoney(r.shipping_fee), ''],
+      ['هزینه ارسال (' + UI.shippingLabel(r.shipping_method) + ')', UI.fmtMoney(r.shipping_fee), '']
+    ];
+    if (method === 'mixed') {
+      rows.push(['پرداخت اسنپ‌پی (مشتری)', UI.fmtMoney(r.snapp_charge), '']);
+      rows.push(['کارمزد اسنپ‌پی (از مشتری)', UI.fmtMoney(r.snapp_fee), '']);
+      rows.push(['پرداخت نقدی (مشتری)', UI.fmtMoney(r.cash_charge), '']);
+    }
+    rows.push(
       [method === 'snapp' ? 'مبلغ اسنپ‌پی شامل کارمزد' : 'مبلغ قابل پرداخت مشتری',
         UI.fmtMoney(r.customer_total), 'total'],
       ['پرداختی به مغازه', UI.fmtMoney(r.owe), ''],
       ['سهم پیج', UI.fmtMoney(r.h_share), '']
-    ];
+    );
     if (method === 'snapp') rows.push(['تسویه اسنپ‌پی (نقدی‌مانند)', UI.fmtMoney(r.payout), '']);
+    if (method === 'mixed') rows.push(['تسویه اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), '']);
 
     rows.forEach(function (row) {
       wrap.appendChild(el('div', { class: 'sum-row ' + (row[2] || '') },
@@ -853,7 +907,7 @@ var Screens = (function () {
   function resetOrderForm() {
     neworder.cart = [];
     neworder.pickerQ = '';
-    ['no-customer', 'no-phone', 'no-address', 'no-postal', 'no-discount', 'no-note', 'no-mult'].forEach(function (id) {
+    ['no-customer', 'no-phone', 'no-address', 'no-postal', 'no-discount', 'no-note', 'no-mult', 'no-snapp-part'].forEach(function (id) {
       var n = document.getElementById(id);
       if (n) n.value = '';
     });
@@ -896,19 +950,34 @@ var Screens = (function () {
     }
 
     var mult = null;
-    if (method === 'snapp') {
+    if (method === 'snapp' || method === 'mixed') {
       var raw = UI.parseFloat10($('#no-mult').value);
       if (raw !== null && (raw <= 0 || raw > 10)) { UI.toast('ضریب اسنپ‌پی نامعتبر است', 'warn'); return; }
       mult = raw;
+    }
+
+    /* the Snapp part is validated with the exact server message */
+    var snappPart = null;
+    if (method === 'mixed') {
+      try {
+        snappPart = Calc.parseSnappPart($('#no-snapp-part').value);
+      } catch (e) {
+        UI.toast(UI.errMessage(e), 'warn');
+        $('#no-snapp-part').focus();
+        return;
+      }
     }
 
     /* client side pre-check (server recomputes everything anyway) */
     var r = orderCalc();
     if (r && r.error) { UI.toast(r.error, 'warn'); return; }
 
-    var yes = await UI.confirm(
-      'سفارش «' + customer + '» به مبلغ ' + UI.money(r.customer_total) + ' ثبت شود؟',
-      { title: 'ثبت سفارش', okLabel: 'ثبت نهایی' });
+    var confirmText = 'سفارش «' + customer + '» به مبلغ ' + UI.money(r.customer_total) + ' ثبت شود؟';
+    if (method === 'mixed') {
+      confirmText = 'سفارش «' + customer + '» به مبلغ ' + UI.money(r.customer_total) +
+        ' (اسنپ‌پی ' + UI.money(r.snapp_charge) + ' + نقدی ' + UI.money(r.cash_charge) + ') ثبت شود؟';
+    }
+    var yes = await UI.confirm(confirmText, { title: 'ثبت سفارش', okLabel: 'ثبت نهایی' });
     if (!yes) return;
 
     var btn = $('#no-save');
@@ -925,6 +994,7 @@ var Screens = (function () {
           discount: discount,
           discount_bearer: bearer,
           snapp_multiplier: mult,
+          snapp_part: snappPart,
           note: note || null,
           status: status
         });

@@ -367,7 +367,11 @@
   var BEARER_LABEL = { helia: 'پیج', mahdi: 'مغازه', split: 'نصف‌نصف' };
   function bearerLabel(b) { return BEARER_LABEL[b] || b; }
   function shippingLabel(s) { return s === 'post' ? 'پست' : 'پیک'; }
-  function methodLabel(m) { return m === 'snapp' ? 'اسنپ‌پی' : 'نقدی/کارت'; }
+  function methodLabel(m) {
+    if (m === 'snapp') return 'اسنپ‌پی';
+    if (m === 'mixed') return 'ترکیبی (نقدی + اسنپ‌پی)';
+    return 'نقدی/کارت';
+  }
 
   /* ------------------------------------------------------------------ CSV */
   function csvCell(v) {

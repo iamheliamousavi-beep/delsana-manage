@@ -214,7 +214,7 @@
       'id, created_at, customer, phone, address, postal_code, items, method, shipping_method, ' +
       'shipping_fee, snapp_multiplier, rounding_step, discount, discount_bearer, mahdi_discount, ' +
       'helia_discount, total, owe, h_share, payout, status, status_history, tracking, note, ' +
-      'pinned, pin_note, pinned_at',
+      'pinned, pin_note, pinned_at, snapp_part, snapp_charge, cash_charge',
       'created_at', false
     );
     App.orders = orders;
@@ -233,6 +233,7 @@
       p_discount: payload.discount || 0,
       p_discount_bearer: payload.discount_bearer || 'helia',
       p_snapp_multiplier: payload.snapp_multiplier,
+      p_snapp_part: payload.snapp_part ?? null,
       p_note: payload.note || null,
       p_status: payload.status || null
     });
