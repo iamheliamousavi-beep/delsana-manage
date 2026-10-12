@@ -3,6 +3,28 @@
 Notable changes to **Delsana Management**. Version 2 implements the master prompt
 (`delsana-master-prompt.md`); older history is listed at the end.
 
+## Unreleased — mixed payment («ترکیبی»)
+
+- New `mixed` payment method (part Snapp Pay + part cash): the seller enters the Snapp
+  part `S` (`0 < S < net`); the customer pays `snappRound(S)` via Snapp plus
+  `(net−S)+ship` cash; the page is settled exactly `S`. Exact integer math on both
+  sides (`Calc.snappRound` rational+BigInt, SQL `round_to_step`); three invariants hold
+  for every method.
+- New columns `snapp_part`/`snapp_charge`/`cash_charge` (backfilled, constrained),
+  pure `order_amounts` as the single server implementation, new 13-arg `create_order`
+  (old overload dropped). Migration `008_mixed_payment.sql` mirrored into `setup.sql`;
+  run it **before** pushing the frontend (the new order list needs the columns).
+- Frontend: «ترکیبی» radio with Snapp-part input + ۲۵٪/۵۰٪/۷۵٪ chips, live part rows and
+  `snapp_below_deposit` warning, save blocked while `S` is invalid, `(اسنپ‌پی + نقدی)`
+  confirm text; list filter + card cells, CSV columns, Accounts by Snapp deposit,
+  reports split by channel with `cashSum + snappSum == total` asserted.
+- Telegram invoice lists both parts and the settlement for mixed; cash/snapp invoices
+  unchanged. Service-worker cache `delsana-v13`.
+- Tests: `tests.html` §5 (M1–M9, errors, 5,000-combo sweep, 2.57M-iteration parity loop,
+  `snappDeposit`, input parsing — 96 checks green), `tests/mixed_payment.sql`
+  (M1–M9, errors, old13, 500-combo sweep), Deno invoice asserts (6/6 green),
+  1,000-input JS↔SQL parity with zero mismatches.
+
 ## Unreleased — admin role («ادمین»)
 
 - New `admin` role: the current store login is promoted (email/password unchanged),

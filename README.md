@@ -43,7 +43,7 @@ Plain HTML/CSS/vanilla JavaScript, no framework, no build step, no `npm`. Backen
 3. This creates: `profiles`, `products`, `orders`, `settings` — plus, for notifications,
    `outbox`, `telegram_links`, `telegram_chats`, `push_subscriptions` and `app_private.config`
    — together with all RLS policies, the indexes, the `orders`/`products` triggers, and every
-   RPC: `create_order`, `set_order_status`, `cancel_order`, `bulk_set_status`, `set_tracking`,
+   RPC: `create_order`, `order_amounts`, `set_order_status`, `cancel_order`, `bulk_set_status`, `set_tracking`,
    `set_pin`, `update_order_info`, `add_product`, `update_product`, `set_hp`, `set_base_price`,
    `set_availability`, `bulk_price_update`, `is_member`/`is_mahdi`/`my_role` and the
    notification RPCs described in section 10.
@@ -133,7 +133,9 @@ Everything is referenced with **relative paths**, so a sub-path works out of the
 
 Open `tests.html` in a browser. It runs every worked example from the specification (the money
 cases of section 2, the rounding regressions, the error case and the number-parsing cases of
-5.14) and shows `PASS` / `FAIL` for each one — 37 checks in total.
+5.14, plus the mixed-payment cases M1–M9, error cases, a 5,000-combo invariant sweep, the
+rounding-parity loop and the input-parsing cases) and shows `PASS` / `FAIL` for each one —
+96 checks in total.
 
 Run it again after changing anything in `calc.js`.
 
@@ -151,13 +153,18 @@ partners see exactly the same numbers.
 | `sub` | `Σ q · unit_sum`, `net = sub − discount` |
 | Cash total | `net + shipping_fee` |
 | Snapp total | `roundToStep(net · snapp_multiplier, rounding_step) + shipping_fee` |
+| Mixed: Snapp part `S` | entered by the seller, `0 < S < net`, integer ≥ 1 |
+| Mixed: customer pays via Snapp | `snapp_charge = snappRound(S · multiplier, rounding_step)` (exact integer math, §3 of the mixed-payment prompt) |
+| Mixed: customer pays cash | `cash_charge = (net − S) + shipping_fee` |
+| Mixed: customer total | `snapp_charge + cash_charge` |
 | `payout` (Snapp settles) | `net + shipping_fee` (same as a cash sale) |
+| Snapp deposit to the page | `0` (cash), `payout` (snapp), `S` (mixed) |
 | `owe` (page → shop) | `Σ q · base − shop_discount + shipping_fee` |
 | `h_share` | `Σ q · hp − page_discount` |
 
 Discount bearer: `helia` (پیج) → the page pays all of it, `mahdi` (مغازه) → the shop pays all of
-it, `split` → half each. Invariants: `owe + h_share == total` (cash) and
-`owe + h_share == payout` (Snapp).
+it, `split` → half each. Invariants, for **every** method: `owe + h_share == payout`,
+`snapp_charge + cash_charge == total`, `snapp_deposit + cash_charge == payout`.
 
 Everything is recomputed **on the server** inside `create_order`; the client numbers are never trusted.
 
@@ -169,7 +176,7 @@ awaiting_snapp ─────► paid       │
         └──────────► cancelled ◄─┘ (from new / awaiting_snapp / paid / settled)
 ```
 
-- Cash orders start at `new` or `paid` (chosen when creating); Snapp orders start at `awaiting_snapp`.
+- Cash orders start at `new` or `paid` (chosen when creating); Snapp and mixed (`ترکیبی`) orders start at `awaiting_snapp`.
 - A **post** order can be marked `shipped` **without** a tracking code; the code may arrive days
   later and is then saved from the order card, from Accounts («ثبت کد») or from the ship dialog.
   Orders waiting for their code are marked «منتظر کد رهگیری».
@@ -182,10 +189,10 @@ awaiting_snapp ─────► paid       │
 | Tab | What it does |
 |-----|--------------|
 | **محصولات** | Live prices (cash + Snapp), availability pill, search, «عدم موجودی» / «موجود شد» (shop only, existing orders untouched), products are archived, never deleted, CSV export. Shop edits name, «قیمت از مغازه» and «سود پیج», adds products and runs a bulk price update (% or fixed) on the shop price. Page edits only «سود پیج». |
-| **سفارش جدید** | Product picker + quantities (an unavailable product blocks the save until it is removed), customer/phone/address/10-digit postal code, shipping, payment, Snapp multiplier override, discount + bearer, live summary. |
-| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment, shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export, and «ایمپورت لیست پست» (section 8.1). |
-| **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
-| **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, «سهم پیج», «پرداختی به مغازه», top-5 products, cash vs Snapp, post vs courier, discounts by bearer — the same for both partners. |
+| **سفارش جدید** | Product picker + quantities (an unavailable product blocks the save until it is removed), customer/phone/address/10-digit postal code, shipping, payment (cash / Snapp / mixed «ترکیبی» with a Snapp-part amount + ۲۵٪/۵۰٪/۷۵٪ helper chips), Snapp multiplier override, discount + bearer, live summary. |
+| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment incl. «ترکیبی», shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export (now with `snapp_part`, `snapp_charge`, `cash_charge`), and «ایمپورت لیست پست» (section 8.1). |
+| **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`, sums and rows by Snapp deposit — `S` for mixed, `payout` for snapp — with a part breakdown on mixed rows), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
+| **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, «سهم پیج», «پرداختی به مغازه», top-5 products, cash vs Snapp vs mixed counts with money split by channel (`cashSum = Σ cash_charge`, `snappSum = Σ snapp_charge`), post vs courier, discounts by bearer — the same for both partners. |
 | **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications, plus the admin-only shared «حالت تست (بی‌صدا)» which drops the automatic partner/channel/push notifications while you try features — your own «اعلان آزمایشی» and invoice still work), and the backup reminder. |
 
 **Roles.** Version 2 has no secret numbers any more: both partners see `base`, `hp`, totals,
@@ -247,6 +254,18 @@ Requires migration `004_bulk_set_tracking.sql` (section 12). No data ever leaves
 14. **Users are created manually** in the Supabase dashboard (admin + page; the store slot
     stays empty until needed) and their `profiles` row is inserted by
     hand — the app never signs people up.
+15. **Mixed payment**: the Snapp part `S` is defined on the cash-equivalent goods value
+    after discount and equals exactly what Snapp Pay deposits to the page account.
+16. **Mixed payment**: shipping is always paid in the cash part and is never multiplied
+    (consistent with pure Snapp orders).
+17. **Mixed payment**: the cash part is treated as received at creation; mixed orders start
+    as `awaiting_snapp` and only the Snapp part is outstanding (no per-part status tracking).
+18. **Mixed payment**: `0 < S < net` is enforced, never clamped — if the cart or discount
+    changes so that `S ≥ net`, the form blocks saving until `S` is fixed.
+19. **Mixed payment**: `p_status` is ignored for mixed (forced `awaiting_snapp`), exactly
+    like `snapp` today — which also ignores it rather than requiring null.
+20. **Mixed payment**: a null discount bearer computes as `helia`, matching what the
+    validator already accepts; the frontend never sends null.
 
 ## 9.1 Display names
 
@@ -256,6 +275,7 @@ Internal identifiers never change, but every string a user can read uses the new
 |---|---|
 | role `helia` | **پیج** (page) |
 | role `mahdi` | **مغازه** (shop) |
+| role `admin` | **ادمین** (admin) |
 
 They come from `UI.PARTY_LABEL` / `UI.partyLabel(role)` in `ui.js` (re-exported as `ROLE_LABEL` in
 `app.js`), and `UI.BEARER_LABEL` for the discount bearer (`helia` → پیج, `mahdi` → مغازه,
@@ -410,13 +430,16 @@ Notes:
    `migrations/001_security.sql` → `migrations/002_simplify_products.sql` →
    `migrations/003_notifications.sql` → `migrations/004_bulk_set_tracking.sql` →
    `migrations/005_fix_bulk_set_tracking.sql` → `migrations/006_telegram_pause.sql` →
-   `migrations/007_admin_role.sql`.
+   `migrations/007_admin_role.sql` → `migrations/008_mixed_payment.sql`.
    Running one twice changes nothing.
    A fresh database needs none of them: `setup.sql` already contains everything.
    Migration 004 adds the `bulk_set_tracking` RPC (section 8.1); until it is applied the
    «ایمپورت لیست پست» button reports a missing-RPC error and changes nothing.
    Migration 006 adds the shared `telegram_paused` setting («حالت تست»); until it is
    applied the toggle reports an error and notifications behave as before (live).
+   Migration 008 adds mixed payment; until it is applied, creating a mixed order fails
+   server-side and the new `loadOrders` columns break the orders list — run it before
+   pushing the frontend.
 3. Supabase Dashboard → **Authentication → Providers → Email** → turn **OFF** «Allow new users to
    sign up» (the app has only its hand-created users, section 5.4 of the spec).
 4. Set the secrets (10.2), deploy the four functions (10.3, 10.6, 10.7), register the Telegram
@@ -431,8 +454,9 @@ Notes:
 
 | Where | What |
 |-------|------|
-| `tests.html` in a browser | 61 checks: every money example of section 2, the rounding regressions, the error case and the number-parsing cases of 5.14, plus the PDF parsing and order-matching of the post-list import (section 8.1, invented fixtures). |
-| `deno test supabase/functions/_shared/format.test.ts` | 6 checks for the notification messages: Jalali date for a known Tehran timestamp, channel text (with/without code, cancelled, HTML-escaped name), invoice (`owe` + `h_share`, no cost text), the merge rule, the push payload. |
+| `tests.html` in a browser | 96 checks: every money example of section 2, the rounding regressions, the error case and the number-parsing cases of 5.14, the PDF parsing and order-matching of the post-list import (section 8.1, invented fixtures), plus the mixed-payment section (M1–M9, warning flag, error cases, 5,000-combo invariant sweep, `snappRound` parity loop, `snappDeposit`, Snapp-part input parsing, reports identity). |
+| `deno test supabase/functions/_shared/format.test.ts` | 6 checks for the notification messages: Jalali date for a known Tehran timestamp, channel text (with/without code, cancelled, HTML-escaped name), invoice (`owe` + `h_share`, no cost text, mixed part lines), the merge rule, the push payload. |
+| `tests/mixed_payment.sql` in the SQL Editor | M1–M9, all error cases, all 13 old examples and a 500-combo invariant sweep against `public.order_amounts` (no login needed; ends with `ALL PASSED`). |
 | SQL harness (`run.js`) | 329 checks: both installation paths, all grants and RLS, the money invariants and the notification RPCs (development only, not shipped). |
 
 **Manual checklist — run once after every deploy**
@@ -468,3 +492,7 @@ Notes:
 15. Test mode: in Settings → «اعلان‌ها» tap «شروع تست (بی‌صدا)», create an order from the
     other phone — the partner gets no DM, push or channel message; your own «ارسال اعلان
     آزمایشی» and «فاکتور در تلگرام من» still work. Tap «پایان تست» afterwards.
+16. Mixed payment: new order → «ترکیبی», Snapp part 325,000 on a 650,000 courier order:
+    summary shows اسنپ‌پی 375,000 + نقدی 325,000 = total 700,000; the confirm dialog names
+    both parts; the stored card shows the part cells; Accounts «در انتظار تسویه اسنپ‌پی»
+    counts 325,000; the invoice DM (فاکتور در تلگرام من) lists both parts and the settlement.
