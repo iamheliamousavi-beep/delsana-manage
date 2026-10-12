@@ -1109,7 +1109,8 @@ var Screens = (function () {
       },
         el('option', { value: '', text: 'همه پرداخت‌ها' }),
         el('option', { value: 'cash', text: 'نقدی / کارت' }),
-        el('option', { value: 'snapp', text: 'اسنپ‌پی' })
+        el('option', { value: 'snapp', text: 'اسنپ‌پی' }),
+        el('option', { value: 'mixed', text: 'ترکیبی' })
       )));
     filters.appendChild(el('div', { class: 'field' },
       el('select', {
@@ -1216,6 +1217,11 @@ var Screens = (function () {
     }
     if (o.method === 'snapp') {
       money.appendChild(moneyCell('تسویه اسنپ‌پی', UI.fmtMoney(o.payout)));
+    }
+    if (o.method === 'mixed') {
+      money.appendChild(moneyCell('اسنپ‌پی (مشتری)', UI.fmtMoney(o.snapp_charge)));
+      money.appendChild(moneyCell('نقدی (مشتری)', UI.fmtMoney(o.cash_charge)));
+      money.appendChild(moneyCell('تسویه اسنپ‌پی', UI.fmtMoney(o.snapp_part)));
     }
     if (o.shipping_fee > 0) {
       money.appendChild(moneyCell('هزینه پست', UI.fmtMoney(o.shipping_fee)));
@@ -1435,6 +1441,7 @@ var Screens = (function () {
       'payment', 'shipping', 'shipping_fee', 'snapp_multiplier', 'rounding_step',
       'discount', 'discount_bearer', 'shop_discount', 'page_discount',
       'customer_total', 'owe_to_shop', 'page_share', 'snapp_payout',
+      'snapp_part', 'snapp_charge', 'cash_charge',
       'status', 'tracking', 'pinned', 'pin_note', 'note'
     ];
 
@@ -1450,6 +1457,7 @@ var Screens = (function () {
         o.method, o.shipping_method, o.shipping_fee, o.snapp_multiplier, o.rounding_step,
         o.discount, UI.bearerLabel(o.discount_bearer), o.mahdi_discount, o.helia_discount,
         o.total, o.owe, o.h_share, o.payout,
+        o.snapp_part || 0, o.snapp_charge || 0, o.cash_charge || 0,
         UI.statusLabel(o.status), o.tracking, o.pinned ? 'yes' : 'no', o.pin_note, o.note
       ]);
     });
@@ -1974,7 +1982,8 @@ var Screens = (function () {
         empty: 'سفارشی در انتظار پول ندارید ✓'
       }));
 
-      /* bucket 1: Snapp Pay pending (money lands on the page account) */
+      /* bucket 1: Snapp Pay pending (money lands on the page account).
+         Sums and rows use the Snapp deposit (S for mixed, payout for snapp). */
       var snapp = live.filter(function (o) { return o.status === 'awaiting_snapp'; });
       body.appendChild(bucketCard({
         title: 'در انتظار تسویه اسنپ‌پی',
@@ -1982,7 +1991,7 @@ var Screens = (function () {
         kind: 'snapp',
         rows: snapp,
         sumLabel: 'جمع در انتظار',
-        sum: sumOf(snapp, 'payout'),
+        sum: snapp.reduce(function (s, o) { return s + Calc.snappDeposit(o); }, 0),
         accent: 'warn',
         bulkLabel: 'ثبت همه به‌عنوان دریافت‌شده',
         bulkTarget: 'paid',
@@ -2128,7 +2137,7 @@ var Screens = (function () {
       if (box) rowBoxes.push(box);
 
       var age = daysSince(o.created_at);
-      var money = UI.money(cfg.kind === 'snapp' ? o.payout
+      var money = UI.money(cfg.kind === 'snapp' ? Calc.snappDeposit(o)
         : (cfg.kind === 'owed' ? o.owe : o.total));
       var metaText = UI.fmtDateTime(o.created_at) + ' · ' + money;
       var pills = el('span', { class: 'row-pills' });
@@ -2173,6 +2182,14 @@ var Screens = (function () {
         el('div', { class: 'grow' },
           el('div', { class: 'name', text: o.customer }),
           el('div', { class: 'meta', text: metaText }),
+          /* mixed rows in the Snapp bucket show both parts */
+          (cfg.kind === 'snapp' && o.method === 'mixed')
+            ? el('div', {
+                class: 'meta',
+                text: 'ترکیبی: اسنپ‌پی ' + UI.fmtMoney(o.snapp_part) +
+                      ' + نقدی ' + UI.fmtMoney(o.cash_charge)
+              })
+            : null,
           pills),
         actions));
     });
@@ -2339,10 +2356,11 @@ var Screens = (function () {
       var maxQty = top.length ? top[0].qty : 1;
 
       var cashCount = rows.filter(function (o) { return o.method === 'cash'; }).length;
-      var snappCount = rows.length - cashCount;
-      var cashSum = rows.filter(function (o) { return o.method === 'cash'; })
-        .reduce(function (s, o) { return s + Number(o.total || 0); }, 0);
-      var snappSum = total - cashSum;
+      var snappCount = rows.filter(function (o) { return o.method === 'snapp'; }).length;
+      var mixedCount = rows.length - cashCount - snappCount;
+      /* money by channel: a mixed order contributes to both sides */
+      var cashSum = rows.reduce(function (s, o) { return s + Number(o.cash_charge || 0); }, 0);
+      var snappSum = rows.reduce(function (s, o) { return s + Number(o.snapp_charge || 0); }, 0);
       var postCount = rows.filter(function (o) { return o.shipping_method === 'post'; }).length;
       var courierCount = rows.length - postCount;
 
@@ -2354,17 +2372,20 @@ var Screens = (function () {
         statCard('پرداختی به مغازه', UI.fmtMoney(oweSum) + ' تومان', 'accent')
       ));
 
-      /* split: cash vs snapp */
+      /* split by channel (a mixed order funds both sides) */
       var splitCard = el('div', { class: 'card' },
         el('div', { class: 'card-title' }, el('h3', { text: 'نقدی در برابر اسنپ‌پی' })),
         el('div', { class: 'split' },
           el('i', { class: 's1', style: 'width:' + (rows.length ? (cashCount / rows.length * 100) : 0) + '%' }),
-          el('i', { class: 's2', style: 'width:' + (rows.length ? (snappCount / rows.length * 100) : 0) + '%' })),
+          el('i', { class: 's2', style: 'width:' + (rows.length ? (snappCount / rows.length * 100) : 0) + '%' }),
+          el('i', { style: 'background:var(--warn);width:' + (rows.length ? (mixedCount / rows.length * 100) : 0) + '%' })),
         el('div', { class: 'split-legend' },
           el('span', {}, el('i', { style: 'background:var(--brand)' }),
             'نقدی: ' + UI.toFaDigits(cashCount) + ' سفارش · ' + UI.fmtMoney(cashSum)),
           el('span', {}, el('i', { style: 'background:var(--info)' }),
-            'اسنپ‌پی: ' + UI.toFaDigits(snappCount) + ' سفارش · ' + UI.fmtMoney(snappSum))),
+            'اسنپ‌پی: ' + UI.toFaDigits(snappCount) + ' سفارش · ' + UI.fmtMoney(snappSum)),
+          el('span', {}, el('i', { style: 'background:var(--warn)' }),
+            'ترکیبی: ' + UI.toFaDigits(mixedCount) + ' سفارش')),
         el('p', { class: 'hint', style: 'margin-top:8px',
           text: 'ارسال: پست ' + UI.toFaDigits(postCount) + ' · پیک ' + UI.toFaDigits(courierCount) })
       );

@@ -751,6 +751,22 @@
     return true;
   });
 
+  /* reports identity: channel sums re-add to the grand total, all methods */
+  addExtra('گزارش: cashSum + snappSum == جمع کل (هر سه روش)', function () {
+    var cash = 0, snapp = 0, total = 0;
+    CASES.forEach(function (c) {
+      if (c.expectError) return;
+      var r = Calc.calcOrder(make(c.in));
+      cash += r.cash_charge; snapp += r.snapp_charge; total += r.customer_total;
+    });
+    MIXED.forEach(function (c) {
+      if (c.expectError) return;
+      var r = Calc.calcOrder(mixedBase(c.in));
+      cash += r.cash_charge; snapp += r.snapp_charge; total += r.customer_total;
+    });
+    return cash + snapp === total ? true : cash + '+' + snapp + '!=' + total;
+  });
+
   /* Snapp-part input parsing: Persian digits, separators, 1.5 rejected */
   [['۳۲۵٬۰۰۰', 325000], ['325,000', 325000], [' 325000 ', 325000], ['5.0', 5], ['۵٫۰', 5]
   ].forEach(function (t, i) {
