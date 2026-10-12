@@ -22,6 +22,9 @@ export type Order = {
   status: string;
   tracking: string;
   note: string;
+  snapp_part: number | null;
+  snapp_charge: number | null;
+  cash_charge: number | null;
 };
 
 export type OutboxRow = {
@@ -59,7 +62,9 @@ export function shippingLabel(s: string): string {
   return s === 'post' ? 'پست' : 'پیک';
 }
 export function methodLabel(m: string): string {
-  return m === 'snapp' ? 'اسنپ‌پی' : 'نقدی';
+  if (m === 'snapp') return 'اسنپ‌پی';
+  if (m === 'mixed') return 'ترکیبی (نقدی + اسنپ‌پی)';
+  return 'نقدی';
 }
 
 /* --------------------------------------------------------------- formatting */
@@ -240,8 +245,13 @@ export function buildInvoice(order: Order): string {
   }
   lines.push(`🚚 ارسال: ${shippingLabel(order.shipping_method)} — ${money(order.shipping_fee)} تومان`);
   lines.push(`💳 پرداخت: ${methodLabel(order.method)}`);
+  if (order.method === 'mixed') {
+    lines.push(`اسنپ‌پی: ${money(order.snapp_charge ?? 0)} تومان`);
+    lines.push(`نقدی: ${money(order.cash_charge ?? 0)} تومان`);
+  }
   lines.push(`💰 مبلغ کل مشتری: ${money(order.total)} تومان`);
   if (order.method === 'snapp') lines.push(`تسویه اسنپ‌پی: ${money(order.payout ?? 0)} تومان`);
+  if (order.method === 'mixed') lines.push(`تسویه اسنپ‌پی: ${money(order.snapp_part ?? 0)} تومان`);
   lines.push('');
   lines.push('📊 حساب‌وکتاب');
   lines.push(`به مغازه: ${money(order.owe)}`);

@@ -62,6 +62,9 @@ const order: Order = {
   status: 'shipped',
   tracking: 'POST-123',
   note: '',
+  snapp_part: 0,
+  snapp_charge: 0,
+  cash_charge: 840000,
 };
 
 function row(kind: string, payload: Record<string, unknown>, actor: string | null = 'user-h'): OutboxRow {
@@ -132,6 +135,25 @@ Deno.test('12.5 invoice DM builder', () => {
   excludes(noNote, '📝 یادداشت', 'no note line when there is no note');
   const withNote = buildInvoice({ ...order, note: 'زنگ در نزنید' });
   includes(withNote, '📝 یادداشت: زنگ در نزنید', 'the note line when there is a note');
+
+  const mixed = buildInvoice({
+    ...order,
+    method: 'mixed',
+    snapp_part: 325000,
+    snapp_charge: 375000,
+    cash_charge: 325000,
+    total: 700000,
+  });
+  includes(mixed, '💳 پرداخت: ترکیبی (نقدی + اسنپ‌پی)', 'the mixed payment label');
+  includes(mixed, 'اسنپ‌پی: ۳۷۵٬۰۰۰ تومان', 'the customer Snapp part line');
+  includes(mixed, 'نقدی: ۳۲۵٬۰۰۰ تومان', 'the customer cash part line');
+  includes(mixed, '💰 مبلغ کل مشتری: ۷۰۰٬۰۰۰ تومان', 'the mixed customer total');
+  includes(mixed, 'تسویه اسنپ‌پی: ۳۲۵٬۰۰۰ تومان', 'the mixed settlement line');
+
+  const cashText = buildInvoice(order);
+  excludes(cashText, 'اسنپ‌پی:', 'no Snapp lines on a cash invoice');
+  excludes(cashText, 'نقدی:', 'no cash-part line on a cash invoice');
+  excludes(cashText, 'تسویه اسنپ‌پی', 'no settlement line on a cash invoice');
 });
 
 /* --------------------------------------------- 12.6) merge rule (9.2 step 2) */
