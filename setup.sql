@@ -191,7 +191,7 @@ create table if not exists public.orders (
   postal_code      text not null default '',
   -- [{product_id, name, qty, base, hp}]  price snapshot of the order
   items            jsonb not null default '[]'::jsonb,
-  method           text not null check (method in ('cash', 'snapp')),
+  method           text not null check (method in ('cash', 'snapp', 'mixed')),
   shipping_method  text not null check (shipping_method in ('post', 'courier')),
   shipping_fee     bigint not null default 0,
   snapp_multiplier numeric not null default 1.15,
@@ -205,6 +205,9 @@ create table if not exists public.orders (
   owe              bigint not null default 0,   -- what the page transfers to the shop
   h_share          bigint not null default 0,   -- what the page keeps
   payout           bigint not null default 0,   -- what Snapp Pay will deposit
+  snapp_part       bigint not null default 0,   -- mixed only: the Snapp side S (= Snapp deposit)
+  snapp_charge     bigint not null default 0,   -- what the customer pays via Snapp (snapp: total)
+  cash_charge      bigint not null default 0,   -- what the customer pays cash (snapp: 0)
   status           text not null default 'new'
                      check (status in ('new', 'awaiting_snapp', 'paid',
                                        'settled', 'shipped', 'delivered',
@@ -220,6 +223,17 @@ create table if not exists public.orders (
 );
 
 alter table public.orders enable row level security;
+
+-- mixed-payment invariant (migration 008): the two customer parts sum to
+-- the total, and only mixed orders carry a Snapp part
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'orders_mixed_amounts_check') then
+    alter table public.orders add constraint orders_mixed_amounts_check
+      check (snapp_charge + cash_charge = total
+             and ((method = 'mixed') = (snapp_part > 0)));
+  end if;
+end $$;
 
 drop policy if exists orders_select on public.orders;
 create policy orders_select on public.orders
@@ -397,8 +411,126 @@ end;
 $$;
 
 -- ==========================================================================
---  RPC: create_order  (server-side calculation, atomic)
+--  RPC: order_amounts + create_order  (server-side calculation, atomic)
+--
+--  order_amounts is the ONE server-side implementation of the money math
+--  (pure: immutable, no auth, no table access). create_order resolves
+--  settings/overrides and product prices, then calls it.
 -- ==========================================================================
+
+create or replace function public.order_amounts(
+  p_sub bigint, p_base_sum bigint, p_hp_sum bigint,
+  p_discount bigint, p_bearer text, p_ship_fee bigint,
+  p_method text, p_snapp_part bigint, p_mult numeric, p_step bigint,
+  out o_net bigint, out o_mahdi_disc bigint, out o_helia_disc bigint,
+  out o_total bigint, out o_payout bigint, out o_owe bigint,
+  out o_h_share bigint, out o_snapp_part bigint,
+  out o_snapp_charge bigint, out o_cash_charge bigint,
+  out o_snapp_deposit bigint
+)
+language plpgsql
+immutable
+set search_path = public
+as $$
+declare
+  v_bearer text := coalesce(p_bearer, 'helia');
+  v_net    bigint;
+  v_total  bigint;
+  v_payout bigint;
+begin
+  if p_sub is null or p_base_sum is null or p_hp_sum is null or p_ship_fee is null then
+    raise exception 'خطای محاسباتی: ورودی نامعتبر است';
+  end if;
+  if p_method not in ('cash', 'snapp', 'mixed') then
+    raise exception 'روش پرداخت نامعتبر است';
+  end if;
+  if v_bearer not in ('helia', 'mahdi', 'split') then
+    raise exception 'طرف تخفیف نامعتبر است';
+  end if;
+  if p_discount is null or p_discount < 0 then
+    raise exception 'تخفیف نمی‌تواند منفی باشد';
+  end if;
+  if p_discount > p_sub then
+    raise exception 'تخفیف از مبلغ کالاها بیشتر است';
+  end if;
+
+  -- discount split (same rules as calc.js; split gives mahdi floor(D/2))
+  if v_bearer = 'helia' then
+    o_mahdi_disc := 0;             o_helia_disc := p_discount;
+  elsif v_bearer = 'mahdi' then
+    o_mahdi_disc := p_discount;    o_helia_disc := 0;
+  else
+    o_mahdi_disc := p_discount / 2;            -- integer division = floor
+    o_helia_disc := p_discount - o_mahdi_disc;
+  end if;
+
+  v_net := p_sub - p_discount;
+  o_net := v_net;
+  v_payout := v_net + p_ship_fee;
+  o_payout := v_payout;
+
+  o_snapp_part := 0;
+  o_snapp_charge := 0;
+  o_cash_charge := 0;
+  o_snapp_deposit := 0;
+
+  if p_method = 'mixed' then
+    if p_snapp_part is null or p_snapp_part < 1 then
+      raise exception 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد';
+    end if;
+    if p_snapp_part >= v_net then
+      raise exception 'مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید';
+    end if;
+    if p_mult is null or p_mult <= 0 or p_mult > 10 then
+      raise exception 'ضریب اسنپ‌پی نامعتبر است';
+    end if;
+    if p_step is null or p_step <= 0 then
+      raise exception 'تنظیمات نامعتبر است';
+    end if;
+    o_snapp_part := p_snapp_part;
+    o_snapp_charge := public.round_to_step(p_snapp_part * p_mult, p_step);
+    if o_snapp_charge <= 0 then
+      raise exception 'مبلغ اسنپ‌پی خیلی کم است؛ بعد از گرد کردن صفر می‌شود';
+    end if;
+    o_cash_charge := (v_net - p_snapp_part) + p_ship_fee;
+    v_total := o_snapp_charge + o_cash_charge;
+    o_snapp_deposit := p_snapp_part;
+  elsif p_method = 'snapp' then
+    if p_snapp_part is not null and p_snapp_part <> 0 then
+      raise exception 'مبلغ اسنپ‌پی فقط برای پرداخت ترکیبی است';
+    end if;
+    if p_mult is null or p_mult <= 0 then
+      raise exception 'ضریب اسنپ‌پی نامعتبر است';
+    end if;
+    if p_step is null or p_step <= 0 then
+      raise exception 'تنظیمات نامعتبر است';
+    end if;
+    v_total := public.round_to_step(v_net * p_mult, p_step) + p_ship_fee;
+    o_snapp_charge := v_total;
+    o_snapp_deposit := v_payout;
+  else
+    if p_snapp_part is not null and p_snapp_part <> 0 then
+      raise exception 'مبلغ اسنپ‌پی فقط برای پرداخت ترکیبی است';
+    end if;
+    v_total := v_net + p_ship_fee;
+    o_cash_charge := v_total;
+  end if;
+  o_total := v_total;
+
+  if p_base_sum - o_mahdi_disc < 0 then
+    raise exception 'تخفیف بر عهده مغازه از مبلغ کالاهای مغازه بیشتر است';
+  end if;
+  o_owe := (p_base_sum - o_mahdi_disc) + p_ship_fee;
+  o_h_share := p_hp_sum - o_helia_disc;
+
+  -- all three invariants hold for every method
+  if (o_owe + o_h_share) <> v_payout
+     or (o_snapp_charge + o_cash_charge) <> v_total
+     or (o_snapp_deposit + o_cash_charge) <> v_payout then
+    raise exception 'خطای محاسباتی: سهم‌ها با پرداختی برابر نیستند';
+  end if;
+end;
+$$;
 
 create or replace function public.create_order(
   p_items            jsonb,             -- [{"product_id": "...", "qty": 2}]
@@ -412,7 +544,8 @@ create or replace function public.create_order(
   p_discount_bearer  text     default 'helia',
   p_snapp_multiplier numeric  default null,
   p_note             text     default null,
-  p_status           text     default null
+  p_status           text     default null,
+  p_snapp_part       bigint   default null
 ) returns uuid
 language plpgsql
 security definer
@@ -426,15 +559,16 @@ declare
   v_base_sum     bigint := 0;
   v_hp_sum       bigint := 0;
   v_discount     bigint := coalesce(p_discount, 0);
+  v_ship_fee     bigint;
   v_mahdi_disc   bigint;
   v_helia_disc   bigint;
-  v_ship_fee     bigint;
-  v_net          bigint;
   v_total        bigint;
   v_payout       bigint;
-  v_goods_owe    bigint;
   v_owe          bigint;
   v_h_share      bigint;
+  v_snapp_part   bigint;
+  v_snapp_charge bigint;
+  v_cash_charge  bigint;
   v_post_fee     bigint;
   v_mult         numeric;
   v_step         bigint;
@@ -457,7 +591,7 @@ begin
   if p_shipping_method not in ('post', 'courier') then
     raise exception 'روش ارسال نامعتبر است';
   end if;
-  if p_method not in ('cash', 'snapp') then
+  if p_method not in ('cash', 'snapp', 'mixed') then
     raise exception 'روش پرداخت نامعتبر است';
   end if;
   if coalesce(p_discount_bearer, 'helia') not in ('helia', 'mahdi', 'split') then
@@ -518,7 +652,7 @@ begin
     if v_step <= 0 then raise exception 'تنظیمات نامعتبر است'; end if;
   end if;
 
-  if p_method = 'snapp' then
+  if p_method = 'snapp' or p_method = 'mixed' then
     if p_snapp_multiplier is not null then
       if p_snapp_multiplier <= 0 or p_snapp_multiplier > 10 then
         raise exception 'ضریب اسنپ‌پی نامعتبر است';
@@ -600,37 +734,17 @@ begin
     raise exception 'تخفیف از مبلغ کالاها بیشتر است';
   end if;
 
-  -- ---------- discount split (same rules as calc.js) --------------------
-  if p_discount_bearer = 'helia' then
-    v_mahdi_disc := 0;             v_helia_disc := v_discount;
-  elsif p_discount_bearer = 'mahdi' then
-    v_mahdi_disc := v_discount;    v_helia_disc := 0;
-  else
-    v_mahdi_disc := v_discount / 2;            -- integer division = floor
-    v_helia_disc := v_discount - v_mahdi_disc;
-  end if;
-
   v_ship_fee := case when p_shipping_method = 'post' then v_post_fee else 0 end;
-  v_net      := v_sub - v_discount;
 
-  if p_method = 'snapp' then
-    v_total := public.round_to_step(v_net * v_mult, v_step) + v_ship_fee;
-  else
-    v_total := v_net + v_ship_fee;
-  end if;
+  -- ---------- amounts: the single server-side implementation ------------
+  select a.o_mahdi_disc, a.o_helia_disc, a.o_total, a.o_payout, a.o_owe,
+         a.o_h_share, a.o_snapp_part, a.o_snapp_charge, a.o_cash_charge
+    into v_mahdi_disc, v_helia_disc, v_total, v_payout, v_owe,
+         v_h_share, v_snapp_part, v_snapp_charge, v_cash_charge
+    from public.order_amounts(
+           v_sub, v_base_sum, v_hp_sum, v_discount, p_discount_bearer,
+           v_ship_fee, p_method, p_snapp_part, v_mult, v_step) as a;
 
-  v_payout    := v_net + v_ship_fee;
-  v_goods_owe := v_base_sum - v_mahdi_disc;
-  if v_goods_owe < 0 then
-    raise exception 'تخفیف بر عهده مغازه از مبلغ کالاهای مغازه بیشتر است';
-  end if;
-  v_owe     := v_goods_owe + v_ship_fee;
-  v_h_share := v_hp_sum - v_helia_disc;
-
-  -- invariant: every toman is either owed to the shop or kept by the page
-  if (v_owe + v_h_share) <> v_payout then
-    raise exception 'خطای محاسباتی: سهم‌ها با پرداختی برابر نیستند';
-  end if;
   if v_h_share < 0 then
     raise notice 'هشدار: سود پیج منفی می‌شود؛ تخفیف را کم کنید';
   end if;
@@ -643,13 +757,14 @@ begin
     customer, phone, address, postal_code, items, method, shipping_method,
     shipping_fee, snapp_multiplier, rounding_step, discount, discount_bearer,
     mahdi_discount, helia_discount, total, owe, h_share, payout,
-    status, status_history, note, last_actor
+    status, status_history, note, last_actor,
+    snapp_part, snapp_charge, cash_charge
   ) values (
     trim(p_customer), trim(public.normalize_digits(p_phone)), trim(p_address), v_postal,
     v_out_items, p_method, p_shipping_method, v_ship_fee, v_mult, v_step,
     v_discount, p_discount_bearer, v_mahdi_disc, v_helia_disc,
     v_total, v_owe, v_h_share, v_payout, v_status, v_hist, coalesce(p_note, ''),
-    v_uid
+    v_uid, v_snapp_part, v_snapp_charge, v_cash_charge
   ) returning id into v_order_id;
 
   return v_order_id;
@@ -1070,6 +1185,7 @@ begin
       join pg_namespace n on n.oid = p.pronamespace
      where n.nspname = 'public'
        and p.proname in ('is_member','is_mahdi','is_admin','my_role',
+                         'order_amounts',
                          'add_product','update_product','set_hp',
                          'set_base_price','set_availability','bulk_price_update',
                          'create_order','set_order_status','cancel_order',
