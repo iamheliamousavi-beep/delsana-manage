@@ -135,6 +135,26 @@ begin
   if r.snapp_deposit <> 4250000 or r.owe <> 8000000 or r.h_share <> 2000000 then raise exception 'owner shares'; end if;
   if r.total <> r.payout + r.snapp_fee then raise exception 'owner inv4'; end if;
 
+  -- -------------------- (3b) split payment: goods Snapp + shipping cash --
+  perform public.admin_update_order(v_o1, jsonb_build_object(
+    'method', 'snapp', 'snapp_part', null,
+    'shipping_payment_method', 'cash',
+    'shipping_method', 'post', 'shipping_fee', 190000));
+  select * into r from public.orders where id = v_o1;
+  -- goods 10M x 1.15 = 11.5M, shipping 190k cash, payout 10.19M
+  if r.shipping_payment_method <> 'cash' then raise exception 'split ship method %', r.shipping_payment_method; end if;
+  if r.total <> 11690000 or r.payout <> 10190000 then raise exception 'split totals %/%', r.total, r.payout; end if;
+  if r.snapp_charge <> 11500000 or r.cash_charge <> 190000 then raise exception 'split parts'; end if;
+  if r.snapp_deposit <> 10000000 then raise exception 'split deposit %', r.snapp_deposit; end if;
+  if r.snapp_charge + r.cash_charge <> r.total then raise exception 'split inv1'; end if;
+  if r.snapp_deposit + r.cash_charge <> r.payout then raise exception 'split inv2'; end if;
+  begin
+    perform public.admin_update_order(v_o1, jsonb_build_object('shipping_payment_method', 'card'));
+    raise exception 'invalid shipping payment should have raised';
+  exception when raise_exception then
+    if SQLERRM <> 'روش پرداخت هزینه ارسال نامعتبر است' then raise; end if;
+  end;
+
   -- ------------------------------------------------ (4) unknown key --------
   begin
     perform public.admin_update_order(v_o1, '{"nope":1}');

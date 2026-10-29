@@ -706,9 +706,11 @@
       if (sub === 0) continue;
       var discount = Math.floor(rnd() * (sub + 1));
       var method = pick(['cash', 'snapp', 'mixed']);
+      var shipPay = pick(['cash', 'snapp']);
       var o = {
         items: items, discount: discount, discount_bearer: pick(['helia', 'mahdi', 'split']),
         shipping_method: pick(['post', 'courier']), payment_method: method,
+        shipping_payment_method: shipPay,
         post_fee: 190000, snapp_multiplier: pick(mults), rounding_step: 5000
       };
       if (method === 'mixed') {
@@ -728,9 +730,10 @@
       if (r.snapp_deposit + r.cash_charge !== r.payout) return 'combo ' + i + ': deposit';
       if (r.owe + r.h_share !== r.payout) return 'combo ' + i + ': shares';
       if (r.payment_method === 'mixed') {
-        if (r.snapp_charge !== r.snapp_part) return 'combo ' + i + ': charge!==S';
+        var shipSnap = shipPay === 'snapp' && o.shipping_method === 'post' ? 190000 : 0;
+        if (r.snapp_charge !== r.snapp_part + shipSnap) return 'combo ' + i + ': charge!==S+ship';
         if (r.customer_total !== r.payout + r.snapp_fee) return 'combo ' + i + ': fee';
-        if (r.snapp_deposit !== r.snapp_part - r.snapp_fee) return 'combo ' + i + ': deposit2';
+        if (r.snapp_deposit !== r.snapp_part - r.snapp_fee + shipSnap) return 'combo ' + i + ': deposit2';
       }
       if (r.invariant_ok !== true) return 'combo ' + i + ': flag';
     }
@@ -778,7 +781,77 @@
     return true;
   });
 
-  /* OWNER regression: Snapp charge is exactly S, fee lives in cash */
+  /* split payment: goods and shipping may use different channels */
+  addExtra('پرداخت جدا: کالا اسنپ‌پی + ارسال نقدی', function () {
+    var r = Calc.calcOrder(make({ payment_method: 'snapp', shipping_payment_method: 'cash' }));
+    if (r.customer_total !== 940000) return 'total=' + r.customer_total;
+    if (r.snapp_charge !== 750000) return 'snapp=' + r.snapp_charge;
+    if (r.cash_charge !== 190000) return 'cash=' + r.cash_charge;
+    if (r.goods_charge !== 750000 || r.shipping_charge !== 190000) return 'split=' + r.goods_charge + '/' + r.shipping_charge;
+    if (r.goods_snapp_charge !== 750000 || r.goods_cash_charge !== 0) return 'goods=' + r.goods_snapp_charge + '/' + r.goods_cash_charge;
+    if (r.shipping_snapp_charge !== 0 || r.shipping_cash_charge !== 190000) return 'ship=' + r.shipping_snapp_charge + '/' + r.shipping_cash_charge;
+    if (r.snapp_deposit !== 650000) return 'deposit=' + r.snapp_deposit;
+    return true;
+  });
+  addExtra('پرداخت جدا: همه نقدی (بدون تغییر نسبت به قبل)', function () {
+    var r = Calc.calcOrder(make({ payment_method: 'cash' }));
+    if (r.snapp_charge !== 0 || r.cash_charge !== 840000) return 'channels=' + r.snapp_charge + '/' + r.cash_charge;
+    if (r.snapp_deposit !== 0) return 'deposit=' + r.snapp_deposit;
+    return true;
+  });
+  addExtra('پرداخت جدا: همه اسنپ‌پی (بدون تغییر نسبت به قبل)', function () {
+    var r = Calc.calcOrder(make({ payment_method: 'snapp' }));
+    if (r.snapp_charge !== 940000 || r.cash_charge !== 0) return 'channels=' + r.snapp_charge + '/' + r.cash_charge;
+    if (r.snapp_deposit !== 840000) return 'deposit=' + r.snapp_deposit;
+    return true;
+  });
+  addExtra('پرداخت جدا: نقدی کالا + ارسال اسنپ‌پی', function () {
+    var r = Calc.calcOrder(make({ payment_method: 'cash', shipping_payment_method: 'snapp' }));
+    if (r.customer_total !== 840000) return 'total=' + r.customer_total;
+    if (r.snapp_charge !== 190000 || r.cash_charge !== 650000) return 'channels=' + r.snapp_charge + '/' + r.cash_charge;
+    if (r.snapp_deposit !== 190000) return 'deposit=' + r.snapp_deposit;
+    return true;
+  });
+  addExtra('پرداخت جدا: روش پرداخت ارسال نامعتبر رد می‌شود', function () {
+    var threw = false;
+    try { Calc.calcOrder(make({ shipping_payment_method: 'card' })); } catch (e) { threw = true; }
+    return threw ? true : 'accepted!';
+  });
+
+  /* old rows have no shipping_payment_method; they keep their old meaning */
+  addExtra('سفارش قدیمی: orderSplit و snappDeposit', function () {
+    var oldSnapp = {
+      method: 'snapp', shipping_fee: 190000, total: 940000, snapp_charge: 940000,
+      cash_charge: 0, payout: 840000, snapp_deposit: 840000
+    };
+    var a = Calc.orderSplit(oldSnapp);
+    if (a.shipping_payment_method !== 'snapp') return 'old snapp shipping=' + a.shipping_payment_method;
+    if (a.goods_charge !== 750000 || a.shipping_charge !== 190000) return 'old snapp split=' + a.goods_charge + '/' + a.shipping_charge;
+    if (a.goods_snapp_charge !== 750000) return 'old snapp goods=' + a.goods_snapp_charge;
+
+    var oldMixed = {
+      method: 'mixed', shipping_fee: 190000, total: 890000,
+      snapp_part: 325000, snapp_charge: 325000, cash_charge: 565000,
+      snapp_fee: 50000, snapp_deposit: 275000, payout: 840000
+    };
+    var b = Calc.orderSplit(oldMixed);
+    if (b.shipping_payment_method !== 'cash') return 'old mixed shipping=' + b.shipping_payment_method;
+    if (b.goods_charge !== 700000 || b.shipping_charge !== 190000) return 'old mixed split=' + b.goods_charge + '/' + b.shipping_charge;
+    if (b.goods_snapp_charge !== 325000 || b.goods_cash_charge !== 375000) return 'old mixed goods=' + b.goods_snapp_charge + '/' + b.goods_cash_charge;
+    if (Calc.snappDeposit(oldMixed) !== 275000) return 'old mixed deposit=' + Calc.snappDeposit(oldMixed);
+
+    var oldCash = {
+      method: 'cash', shipping_fee: 190000, total: 840000,
+      snapp_charge: 0, cash_charge: 840000
+    };
+    var c = Calc.orderSplit(oldCash);
+    if (c.shipping_payment_method !== 'cash') return 'old cash shipping=' + c.shipping_payment_method;
+    if (c.goods_charge !== 650000 || c.goods_cash_charge !== 650000) return 'old cash goods=' + c.goods_charge + '/' + c.goods_cash_charge;
+    if (Calc.snappDeposit(oldCash) !== 0) return 'old cash deposit=' + Calc.snappDeposit(oldCash);
+    return true;
+  });
+
+
   addExtra('OWNER: اسنپ‌پی مشتری دقیقاً ۵٬۰۰۰٬۰۰۰', function () {
     var r = Calc.calcOrder(mixedBase({ items: [{ qty: 1, base: 8000000, hp: 2000000 }], snapp_part: 5000000 }));
     if (r.snapp_charge !== 5000000) return 'charge=' + r.snapp_charge;

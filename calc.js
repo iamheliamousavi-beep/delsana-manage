@@ -17,6 +17,8 @@
   var BEARERS = ['helia', 'mahdi', 'split'];
   var SHIPPING = ['post', 'courier'];
   var METHODS = ['cash', 'snapp', 'mixed'];
+  /* how the shipping fee itself is paid: cash (or card, same channel) / Snapp */
+  var SHIPPING_PAYMENTS = ['cash', 'snapp'];
   var MAX_SAFE = 9007199254740991;
 
   /* Float-safe rounding to a step.
@@ -114,7 +116,9 @@
        items: [{ qty, base, hp }]      (order snapshots)
        discount, discount_bearer
        shipping_method: 'post'|'courier'
-       payment_method:  'cash'|'snapp'|'mixed'
+       payment_method:  'cash'|'snapp'|'mixed'  (how the goods are paid)
+       shipping_payment_method: 'cash'|'snapp'  (how the shipping fee is paid;
+         omitted -> follows the goods method, mixed -> cash, matching old rows)
        post_fee, snapp_multiplier, rounding_step      (settings/snapshot values)
        snapp_part: the Snapp side S (mixed only; cash/snapp must send null/0)
      returns every derived amount as integers. */
@@ -127,11 +131,16 @@
     if (!isFinite(mult)) mult = 1;
     var bearer = inp.discount_bearer || 'helia';
     var ship = inp.shipping_method || 'courier';
-    var method = inp.payment_method || 'cash';
+    var method = inp.payment_method || inp.goods_payment_method || 'cash';
+    var shipPay = inp.shipping_payment_method;
+    if (shipPay === undefined || shipPay === null || shipPay === '') {
+      shipPay = method === 'mixed' ? 'cash' : method;
+    }
 
     if (BEARERS.indexOf(bearer) === -1) throw new Error('بر عهده تخفیف نامعتبر است');
     if (SHIPPING.indexOf(ship) === -1) throw new Error('روش ارسال نامعتبر است');
     if (METHODS.indexOf(method) === -1) throw new Error('روش پرداخت نامعتبر است');
+    if (SHIPPING_PAYMENTS.indexOf(shipPay) === -1) throw new Error('روش پرداخت هزینه ارسال نامعتبر است');
 
     var sub = 0, baseSum = 0, hpSum = 0;
     for (var i = 0; i < inp.items.length; i++) {
@@ -167,9 +176,15 @@
     /* Snapp Pay settles the same amount a cash sale would produce. */
     var payout = net + shipping_fee;
 
+    /* the shipping fee is never multiplied; it is simply routed to the
+       channel the seller picked for it */
+    var shipping_snapp = shipPay === 'snapp' ? shipping_fee : 0;
+    var shipping_cash = shipping_fee - shipping_snapp;
+
     var customer_total;
     var snapp_part = 0, snapp_charge = 0, cash_charge = 0;
     var snapp_deposit = 0, snapp_fee = 0, snapp_fee_clamped = false;
+    var goods_snapp_charge = 0, goods_cash_charge = 0;
     if (method === 'mixed') {
       var S = parseSnappPart(sRaw);
       if (S >= net) {
@@ -188,19 +203,28 @@
         throw new Error('کارمزد اسنپ‌پی از مبلغ اسنپ‌پی بیشتر می‌شود؛ ضریب را بررسی کنید');
       }
       snapp_part = S;
-      snapp_charge = S;
-      snapp_deposit = S - snapp_fee;
-      cash_charge = (net - S) + snapp_fee + shipping_fee;
+      goods_snapp_charge = S;
+      goods_cash_charge = (net - S) + snapp_fee;
+      snapp_charge = goods_snapp_charge + shipping_snapp;
+      cash_charge = goods_cash_charge + shipping_cash;
+      snapp_deposit = (S - snapp_fee) + shipping_snapp;
       customer_total = snapp_charge + cash_charge;
     } else if (method === 'snapp') {
-      customer_total = roundToStep(net * mult, step) + shipping_fee;
-      snapp_charge = customer_total;
-      snapp_deposit = payout;
+      var goods_snapp = roundToStep(net * mult, step);
+      goods_snapp_charge = goods_snapp;
+      goods_cash_charge = 0;
+      snapp_charge = goods_snapp + shipping_snapp;
+      cash_charge = shipping_cash;
+      snapp_deposit = net + shipping_snapp;
+      customer_total = goods_snapp + shipping_fee;
       snapp_fee = 0;
     } else {
+      goods_snapp_charge = 0;
+      goods_cash_charge = net;
+      snapp_charge = shipping_snapp;
+      cash_charge = net + shipping_cash;
+      snapp_deposit = shipping_snapp;
       customer_total = net + shipping_fee;
-      cash_charge = customer_total;
-      snapp_deposit = 0;
       snapp_fee = 0;
     }
 
@@ -215,10 +239,13 @@
        every toman of the payout is owed either to the shop or kept by the
        page; what the customer pays splits exactly into Snapp + cash parts;
        what the page ends up holding (Snapp deposit + cash in hand) is the
-       payout; for mixed, total = payout + snapp_fee. All hold for every method. */
+       payout; for mixed, total = payout + snapp_fee; the goods charge plus
+       the shipping charge is exactly the customer total. */
+    var goods_charge = customer_total - shipping_fee;
     var invariant_ok = (owe + h_share) === payout &&
                        (snapp_charge + cash_charge) === customer_total &&
                        (snapp_deposit + cash_charge) === payout &&
+                       (goods_charge + shipping_fee) === customer_total &&
                        (method !== 'mixed' || customer_total === payout + snapp_fee);
     if (!invariant_ok) {
       throw new Error('خطای محاسباتی داخلی: پرداختی برابر با سهم‌ها نیست');
@@ -233,7 +260,15 @@
       helia_discount: helia_discount,
       shipping_method: ship,
       shipping_fee: shipping_fee,
+      shipping_payment_method: shipPay,
+      shipping_charge: shipping_fee,
+      shipping_snapp_charge: shipping_snapp,
+      shipping_cash_charge: shipping_cash,
+      goods_charge: goods_charge,
+      goods_snapp_charge: goods_snapp_charge,
+      goods_cash_charge: goods_cash_charge,
       payment_method: method,
+      goods_payment_method: method,
       snapp_multiplier: mult,
       rounding_step: step,
       customer_total: customer_total,
@@ -253,9 +288,20 @@
     };
   }
 
+  /* Old rows have no shipping_payment_method; they behaved exactly like
+     "shipping follows the goods method, mixed -> cash". */
+  function shippingPaymentMethod(order) {
+    if (!order) return 'cash';
+    var v = order.shipping_payment_method;
+    if (v === 'cash' || v === 'snapp') return v;
+    var m = order.payment_method || order.method || 'cash';
+    return m === 'mixed' ? 'cash' : m;
+  }
+
   /* One definition of the Snapp settlement for a stored order row
-     (Accounts / Reports / Invoice all use this): cash -> 0,
-     snapp -> payout, mixed -> snapp_part - snapp_fee. Prefers the stored
+     (Accounts / Reports / Invoice all use this): cash goods -> 0,
+     snapp goods -> net, mixed -> snapp_part - snapp_fee; plus the shipping
+     fee when the shipping itself is paid through Snapp. Prefers the stored
      snapp_deposit column when present. */
   function snappDeposit(order) {
     if (!order) return 0;
@@ -264,9 +310,47 @@
       if (isFinite(v)) return v;
     }
     var m = order.payment_method || order.method || 'cash';
-    if (m === 'mixed') return Math.floor(Number(order.snapp_part) || 0) - Math.floor(Number(order.snapp_fee) || 0);
-    if (m === 'snapp') return Math.floor(Number(order.payout) || 0);
-    return 0;
+    var shipFee = Math.floor(Number(order.shipping_fee) || 0);
+    var shipSnap = shippingPaymentMethod(order) === 'snapp' ? shipFee : 0;
+    if (m === 'mixed') {
+      return Math.floor(Number(order.snapp_part) || 0) - Math.floor(Number(order.snapp_fee) || 0) + shipSnap;
+    }
+    if (m === 'snapp') {
+      return Math.floor(Number(order.payout) || 0) - shipFee + shipSnap;
+    }
+    return shipSnap;
+  }
+
+  /* Goods/shipping charge breakdown for a stored order row (card, invoice,
+     CSV and reports use this). It is derived from the stored channel totals,
+     so old rows work without any migration. */
+  function orderSplit(order) {
+    if (!order) {
+      return {
+        shipping_payment_method: 'cash', shipping_charge: 0,
+        shipping_snapp_charge: 0, shipping_cash_charge: 0,
+        goods_charge: 0, goods_snapp_charge: 0, goods_cash_charge: 0,
+        snapp_charge: 0, cash_charge: 0
+      };
+    }
+    var shipFee = Math.max(0, Math.floor(Number(order.shipping_fee) || 0));
+    var total = Math.max(0, Math.floor(Number(order.total) || 0));
+    var snap = Math.max(0, Math.floor(Number(order.snapp_charge) || 0));
+    var cash = Math.max(0, Math.floor(Number(order.cash_charge) || 0));
+    var shipPay = shippingPaymentMethod(order);
+    var shipSnap = shipPay === 'snapp' ? shipFee : 0;
+    var shipCash = shipFee - shipSnap;
+    return {
+      shipping_payment_method: shipPay,
+      shipping_charge: shipFee,
+      shipping_snapp_charge: shipSnap,
+      shipping_cash_charge: shipCash,
+      goods_charge: total - shipFee,
+      goods_snapp_charge: Math.max(0, snap - shipSnap),
+      goods_cash_charge: Math.max(0, cash - shipCash),
+      snapp_charge: snap,
+      cash_charge: cash
+    };
   }
 
   /* Price a single unit for the product cards (no shipping, no discount). */
@@ -287,16 +371,19 @@
   }
 
   var Calc = {
-    VERSION: 4,
+    VERSION: 5,
     BEARERS: BEARERS,
     SHIPPING: SHIPPING,
     METHODS: METHODS,
+    SHIPPING_PAYMENTS: SHIPPING_PAYMENTS,
     roundToStep: roundToStep,
     snappRound: snappRound,
     parseSnappPart: parseSnappPart,
     splitDiscount: splitDiscount,
     calcOrder: calcOrder,
+    shippingPaymentMethod: shippingPaymentMethod,
     snappDeposit: snappDeposit,
+    orderSplit: orderSplit,
     unitPrices: unitPrices
   };
 

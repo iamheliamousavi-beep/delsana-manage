@@ -193,6 +193,9 @@ create table if not exists public.orders (
   items            jsonb not null default '[]'::jsonb,
   method           text not null check (method in ('cash', 'snapp', 'mixed')),
   shipping_method  text not null check (shipping_method in ('post', 'courier')),
+  -- how the shipping fee itself is paid (goods use `method` above)
+  shipping_payment_method text not null default 'cash'
+                     check (shipping_payment_method in ('cash', 'snapp')),
   shipping_fee     bigint not null default 0,
   snapp_multiplier numeric not null default 1.15,
   rounding_step    bigint not null default 5000,
@@ -237,7 +240,9 @@ begin
              and owe + h_share = payout
              and ((method = 'mixed') = (snapp_part > 0))
              and (method <> 'mixed' or (snapp_charge = snapp_part
+                                        + (case when shipping_payment_method = 'snapp' then shipping_fee else 0 end)
                                         and snapp_deposit = snapp_part - snapp_fee
+                                        + (case when shipping_payment_method = 'snapp' then shipping_fee else 0 end)
                                         and total = payout + snapp_fee))
              and snapp_fee >= 0
              and snapp_deposit >= 0
@@ -432,6 +437,7 @@ create or replace function public.order_amounts(
   p_sub bigint, p_base_sum bigint, p_hp_sum bigint,
   p_discount bigint, p_bearer text, p_ship_fee bigint,
   p_method text, p_snapp_part bigint, p_mult numeric, p_step bigint,
+  p_shipping_payment_method text default 'cash',
   out o_net bigint, out o_mahdi_disc bigint, out o_helia_disc bigint,
   out o_total bigint, out o_payout bigint, out o_owe bigint,
   out o_h_share bigint, out o_snapp_part bigint,
@@ -451,12 +457,20 @@ declare
   v_rounded bigint;
   v_fee    bigint;
   v_clamped boolean := false;
+  v_ship_pay text;
+  v_ship_snap bigint;
 begin
   if p_sub is null or p_base_sum is null or p_hp_sum is null or p_ship_fee is null then
     raise exception 'خطای محاسباتی: ورودی نامعتبر است';
   end if;
   if p_method not in ('cash', 'snapp', 'mixed') then
     raise exception 'روش پرداخت نامعتبر است';
+  end if;
+  -- old callers / old rows: shipping follows the goods method, mixed -> cash
+  v_ship_pay := coalesce(nullif(trim(p_shipping_payment_method), ''),
+                         case when p_method = 'mixed' then 'cash' else p_method end);
+  if v_ship_pay not in ('cash', 'snapp') then
+    raise exception 'روش پرداخت هزینه ارسال نامعتبر است';
   end if;
   if v_bearer not in ('helia', 'mahdi', 'split') then
     raise exception 'طرف تخفیف نامعتبر است';
@@ -482,6 +496,8 @@ begin
   o_net := v_net;
   v_payout := v_net + p_ship_fee;
   o_payout := v_payout;
+  -- the shipping fee is never multiplied; it is routed as-is
+  v_ship_snap := case when v_ship_pay = 'snapp' then p_ship_fee else 0 end;
 
   o_snapp_part := 0;
   o_snapp_charge := 0;
@@ -517,9 +533,9 @@ begin
     o_snapp_part := p_snapp_part;
     o_snapp_fee := v_fee;
     o_snapp_fee_clamped := v_clamped;
-    o_snapp_charge := p_snapp_part;
-    o_snapp_deposit := p_snapp_part - v_fee;
-    o_cash_charge := (v_net - p_snapp_part) + v_fee + p_ship_fee;
+    o_snapp_charge := p_snapp_part + v_ship_snap;
+    o_snapp_deposit := (p_snapp_part - v_fee) + v_ship_snap;
+    o_cash_charge := (v_net - p_snapp_part) + v_fee + (p_ship_fee - v_ship_snap);
     v_total := o_snapp_charge + o_cash_charge;
   elsif p_method = 'snapp' then
     if p_snapp_part is not null and p_snapp_part <> 0 then
@@ -531,9 +547,11 @@ begin
     if p_step is null or p_step <= 0 then
       raise exception 'تنظیمات نامعتبر است';
     end if;
-    v_total := public.round_to_step(v_net * p_mult, p_step) + p_ship_fee;
-    o_snapp_charge := v_total;
-    o_snapp_deposit := v_payout;
+    v_rounded := public.round_to_step(v_net * p_mult, p_step);
+    v_total := v_rounded + p_ship_fee;
+    o_snapp_charge := v_rounded + v_ship_snap;
+    o_cash_charge := p_ship_fee - v_ship_snap;
+    o_snapp_deposit := v_net + v_ship_snap;
     o_snapp_fee := 0;
     o_snapp_fee_clamped := false;
   else
@@ -541,8 +559,9 @@ begin
       raise exception 'مبلغ اسنپ‌پی فقط برای پرداخت ترکیبی است';
     end if;
     v_total := v_net + p_ship_fee;
-    o_cash_charge := v_total;
-    o_snapp_deposit := 0;
+    o_snapp_charge := v_ship_snap;
+    o_cash_charge := v_net + (p_ship_fee - v_ship_snap);
+    o_snapp_deposit := v_ship_snap;
     o_snapp_fee := 0;
     o_snapp_fee_clamped := false;
   end if;
@@ -577,7 +596,8 @@ create or replace function public.create_order(
   p_snapp_multiplier numeric  default null,
   p_note             text     default null,
   p_status           text     default null,
-  p_snapp_part       bigint   default null
+  p_snapp_part       bigint   default null,
+  p_shipping_payment_method text default null
 ) returns uuid
 language plpgsql
 security definer
@@ -603,6 +623,7 @@ declare
   v_cash_charge  bigint;
   v_snapp_deposit bigint;
   v_snapp_fee    bigint;
+  v_ship_pay     text;
   v_post_fee     bigint;
   v_mult         numeric;
   v_step         bigint;
@@ -627,6 +648,12 @@ begin
   end if;
   if p_method not in ('cash', 'snapp', 'mixed') then
     raise exception 'روش پرداخت نامعتبر است';
+  end if;
+  -- old clients send null: shipping follows the goods method (mixed -> cash)
+  v_ship_pay := coalesce(nullif(trim(p_shipping_payment_method), ''),
+                         case when p_method = 'mixed' then 'cash' else p_method end);
+  if v_ship_pay not in ('cash', 'snapp') then
+    raise exception 'روش پرداخت هزینه ارسال نامعتبر است';
   end if;
   if coalesce(p_discount_bearer, 'helia') not in ('helia', 'mahdi', 'split') then
     raise exception 'طرف تخفیف نامعتبر است';
@@ -693,6 +720,9 @@ begin
       end if;
       v_mult := p_snapp_multiplier;
     end if;
+  end if;
+  -- any Snapp-paid part (goods or shipping) waits for Snapp settlement
+  if p_method = 'snapp' or p_method = 'mixed' or v_ship_pay = 'snapp' then
     v_status := 'awaiting_snapp';
   else
     v_status := coalesce(p_status, 'new');
@@ -779,7 +809,7 @@ begin
          v_snapp_deposit, v_snapp_fee
     from public.order_amounts(
            v_sub, v_base_sum, v_hp_sum, v_discount, p_discount_bearer,
-           v_ship_fee, p_method, p_snapp_part, v_mult, v_step) as a;
+           v_ship_fee, p_method, p_snapp_part, v_mult, v_step, v_ship_pay) as a;
 
   if v_h_share < 0 then
     raise notice 'هشدار: سود پیج منفی می‌شود؛ تخفیف را کم کنید';
@@ -791,13 +821,13 @@ begin
   -- ---------- insert the order (atomic: one statement, one transaction) --
   insert into public.orders (
     customer, phone, address, postal_code, items, method, shipping_method,
-    shipping_fee, snapp_multiplier, rounding_step, discount, discount_bearer,
-    mahdi_discount, helia_discount, total, owe, h_share, payout,
-    status, status_history, note, last_actor,
+    shipping_payment_method, shipping_fee, snapp_multiplier, rounding_step,
+    discount, discount_bearer, mahdi_discount, helia_discount, total, owe,
+    h_share, payout, status, status_history, note, last_actor,
     snapp_part, snapp_charge, cash_charge, snapp_fee, snapp_deposit
   ) values (
     trim(p_customer), trim(public.normalize_digits(p_phone)), trim(p_address), v_postal,
-    v_out_items, p_method, p_shipping_method, v_ship_fee, v_mult, v_step,
+    v_out_items, p_method, p_shipping_method, v_ship_pay, v_ship_fee, v_mult, v_step,
     v_discount, p_discount_bearer, v_mahdi_disc, v_helia_disc,
     v_total, v_owe, v_h_share, v_payout, v_status, v_hist, coalesce(p_note, ''),
     v_uid, v_snapp_part, v_snapp_charge, v_cash_charge, v_snapp_fee, v_snapp_deposit
@@ -1771,7 +1801,7 @@ as $$
 declare
   o record;
   v_customer text; v_phone text; v_address text; v_postal text; v_note text;
-  v_ship text; v_method text; v_snapp_part bigint; v_discount bigint;
+  v_ship text; v_method text; v_ship_pay text; v_snapp_part bigint; v_discount bigint;
   v_bearer text; v_tracking text; v_status text;
   v_post_fee bigint; v_mult numeric; v_step bigint;
   v_set text;
@@ -1786,7 +1816,7 @@ declare
   v_changed text[] := '{}';
   v_key text;
   v_allowed text[] := array['customer','phone','address','postal_code','note',
-    'shipping_method','method','snapp_part','discount','discount_bearer',
+    'shipping_method','shipping_payment_method','method','snapp_part','discount','discount_bearer',
     'tracking','status','shipping_fee','snapp_multiplier','rounding_step','items'];
   e jsonb; v_name text; v_qty bigint; v_base bigint; v_hp bigint; v_pid text;
   it jsonb;
@@ -1816,6 +1846,11 @@ begin
   v_note     := case when p_data ? 'note' then coalesce(p_data->>'note', '') else o.note end;
   v_ship     := case when p_data ? 'shipping_method' then p_data->>'shipping_method' else o.shipping_method end;
   v_method   := case when p_data ? 'method' then p_data->>'method' else o.method end;
+  v_ship_pay := case when p_data ? 'shipping_payment_method'
+                     then nullif(trim(coalesce(p_data->>'shipping_payment_method', '')), '')
+                     else coalesce(o.shipping_payment_method,
+                                   case when o.method = 'mixed' then 'cash' else o.method end)
+                end;
   v_snapp_part := case when p_data ? 'snapp_part'
                        then (case when p_data->>'snapp_part' is null then null else (p_data->>'snapp_part')::bigint end)
                        else o.snapp_part end;
@@ -1873,6 +1908,12 @@ begin
   end if;
   if v_method not in ('cash', 'snapp', 'mixed') then
     raise exception 'روش پرداخت نامعتبر است';
+  end if;
+  if v_ship_pay is null then
+    v_ship_pay := case when v_method = 'mixed' then 'cash' else v_method end;
+  end if;
+  if v_ship_pay not in ('cash', 'snapp') then
+    raise exception 'روش پرداخت هزینه ارسال نامعتبر است';
   end if;
   if v_bearer not in ('helia', 'mahdi', 'split') then
     raise exception 'طرف تخفیف نامعتبر است';
@@ -1946,7 +1987,7 @@ begin
          v_h_share, v_sp, v_sc, v_cc, v_dep, v_fee
     from public.order_amounts(
            v_sub, v_base_sum, v_hp_sum, v_discount, v_bearer,
-           v_ship_fee, v_method, v_snapp_part, v_mult, v_step) as a;
+           v_ship_fee, v_method, v_snapp_part, v_mult, v_step, v_ship_pay) as a;
 
   -- status_history: admin override bypasses the flow but is logged
   v_hist := o.status_history;
@@ -1960,6 +2001,7 @@ begin
     customer = v_customer, phone = v_phone, address = v_address,
     postal_code = v_postal, note = v_note,
     items = v_out_items, method = v_method, shipping_method = v_ship,
+    shipping_payment_method = v_ship_pay,
     shipping_fee = v_ship_fee, snapp_multiplier = v_mult, rounding_step = v_step,
     discount = v_discount, discount_bearer = v_bearer,
     mahdi_discount = v_mahdi_disc, helia_discount = v_helia_disc,

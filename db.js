@@ -214,7 +214,8 @@
       'id, created_at, customer, phone, address, postal_code, items, method, shipping_method, ' +
       'shipping_fee, snapp_multiplier, rounding_step, discount, discount_bearer, mahdi_discount, ' +
       'helia_discount, total, owe, h_share, payout, status, status_history, tracking, note, ' +
-      'pinned, pin_note, pinned_at, snapp_part, snapp_charge, cash_charge, snapp_fee, snapp_deposit',
+      'pinned, pin_note, pinned_at, snapp_part, snapp_charge, cash_charge, snapp_fee, snapp_deposit, ' +
+      'shipping_payment_method',
       'created_at', false
     );
     App.orders = orders;
@@ -235,7 +236,8 @@
       p_snapp_multiplier: payload.snapp_multiplier,
       p_snapp_part: payload.snapp_part ?? null,
       p_note: payload.note || null,
-      p_status: payload.status || null
+      p_status: payload.status || null,
+      p_shipping_payment_method: payload.shipping_payment_method || null
     });
     return id;
   };

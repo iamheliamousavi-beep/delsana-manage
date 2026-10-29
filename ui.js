@@ -352,7 +352,7 @@
     return (STATUS_FLOW[order.status] || []).map(function (s) {
       return {
         status: s,
-        label: s === 'paid' && order.method === 'cash' ? 'پرداخت شد' : ACTION_LABEL[s],
+        label: s === 'paid' && order.status === 'new' ? 'پرداخت شد' : ACTION_LABEL[s],
         cls: s === 'cancelled' ? 'danger' : (s === 'shipped' || s === 'delivered' || s === 'settled' || s === 'paid' ? 'primary' : ''),
         danger: s === 'cancelled'
       };
@@ -371,6 +371,10 @@
     if (m === 'snapp') return 'اسنپ‌پی';
     if (m === 'mixed') return 'ترکیبی (نقدی + اسنپ‌پی)';
     return 'نقدی/کارت';
+  }
+  /* shipping fee payment: only cash (incl. card) or Snapp */
+  function shippingPaymentLabel(m) {
+    return m === 'snapp' ? 'اسنپ‌پی' : 'نقدی/کارت';
   }
 
   /* ------------------------------------------------------------------ CSV */
@@ -514,6 +518,7 @@
     PARTY_LABEL: PARTY_LABEL, partyLabel: partyLabel,
     BEARER_LABEL: BEARER_LABEL,
     bearerLabel: bearerLabel, shippingLabel: shippingLabel, methodLabel: methodLabel,
+    shippingPaymentLabel: shippingPaymentLabel,
     downloadCSV: downloadCSV, errMessage: errMessage, debounce: debounce,
     isDeleteConfirm: isDeleteConfirm,
     theme: {

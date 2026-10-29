@@ -124,16 +124,33 @@ Deno.test('12.5 invoice DM builder', () => {
   includes(text, '💰 مبلغ کل مشتری: ۸۴۰٬۰۰۰ تومان', 'the customer total');
   includes(text, '🚚 کد رهگیری: POST-123', 'the tracking line');
   includes(text, '📌 وضعیت: ارسال شده', 'the Persian status label');
-  includes(text, '💳 پرداخت: نقدی', 'the payment method label');
+  includes(text, '💳 پرداخت کالا — نقدی / کارت: ۶۵۰٬۰۰۰ تومان', 'the goods payment label and amount');
+  includes(text, '🚚 پرداخت ارسال — نقدی / کارت: ۱۹۰٬۰۰۰ تومان', 'the shipping payment label and amount');
 
   excludes(text, 'سود مغازه', 'never mentions the shop profit');
   excludes(text, 'سود پیج', 'never mentions the page profit');
   excludes(text, 'cost', 'never mentions a cost column');
   excludes(text, 'مبلغ خرید', 'never mentions the purchase cost');
 
-  const snapp = buildInvoice({ ...order, method: 'snapp', payout: 840000, owe: 690000 });
-  includes(snapp, '💳 پرداخت: اسنپ‌پی', 'snapp payment label');
-  includes(snapp, 'تسویه اسنپ‌پی: ۸۴۰٬۰۰۰ تومان', 'the snapp settlement line only exists for snapp');
+  const snapp = buildInvoice({
+    ...order, method: 'snapp', payout: 840000, owe: 690000,
+    total: 940000, snapp_charge: 940000, cash_charge: 0, snapp_deposit: 840000,
+  });
+  includes(snapp, '💳 پرداخت کالا — اسنپ‌پی: ۷۵۰٬۰۰۰ تومان', 'snapp goods payment label');
+  includes(snapp, '🚚 پرداخت ارسال — اسنپ‌پی: ۱۹۰٬۰۰۰ تومان', 'old snapp rows pay shipping through Snapp');
+  includes(snapp, 'دریافتی اسنپ‌پی: ۹۴۰٬۰۰۰ تومان', 'the whole customer total arrived through Snapp');
+  includes(snapp, 'واریزی اسنپ‌پی: ۸۴۰٬۰۰۰ تومان', 'the snapp settlement line');
+
+  const split = buildInvoice({
+    ...order, method: 'snapp', shipping_payment_method: 'cash',
+    total: 940000, snapp_charge: 750000, cash_charge: 190000,
+    payout: 840000, snapp_deposit: 650000,
+  });
+  includes(split, '💳 پرداخت کالا — اسنپ‌پی: ۷۵۰٬۰۰۰ تومان', 'goods can be Snapp while shipping is cash');
+  includes(split, '🚚 پرداخت ارسال — نقدی / کارت: ۱۹۰٬۰۰۰ تومان', 'shipping cash line');
+  includes(split, 'دریافتی اسنپ‌پی: ۷۵۰٬۰۰۰ تومان', 'only the goods part is counted as Snapp');
+  includes(split, 'دریافتی نقدی / کارت: ۱۹۰٬۰۰۰ تومان', 'only the shipping part is counted as cash');
+  includes(split, 'واریزی اسنپ‌پی: ۶۵۰٬۰۰۰ تومان', 'the Snapp deposit excludes the cash shipping');
 
   const discounted = buildInvoice({ ...order, discount: 50000, discount_bearer: 'split' });
   includes(discounted, '🏷 تخفیف: ۵۰٬۰۰۰ (بر عهده نصف‌نصف)', 'the discount line with its bearer');
@@ -150,19 +167,20 @@ Deno.test('12.5 invoice DM builder', () => {
     snapp_charge: 325000,
     snapp_fee: 50000,
     snapp_deposit: 275000,
-    cash_charge: 375000,
-    total: 700000,
+    cash_charge: 565000,
+    total: 890000,
   });
-  includes(mixed, '💳 پرداخت: ترکیبی (نقدی + اسنپ‌پی)', 'the mixed payment label');
-  includes(mixed, 'اسنپ‌پی (مشتری): ۳۲۵٬۰۰۰ تومان', 'the customer Snapp part line');
-  includes(mixed, 'نقدی (مشتری، شامل کارمزد اسنپ‌پی ۵۰٬۰۰۰): ۳۷۵٬۰۰۰ تومان', 'the customer cash part line with fee');
-  includes(mixed, '💰 مبلغ کل مشتری: ۷۰۰٬۰۰۰ تومان', 'the mixed customer total');
+  includes(mixed, '💳 پرداخت کالا — ترکیبی (نقدی + اسنپ‌پی): ۷۰۰٬۰۰۰ تومان', 'the mixed goods payment label');
+  includes(mixed, '🚚 پرداخت ارسال — نقدی / کارت: ۱۹۰٬۰۰۰ تومان', 'old mixed rows pay shipping cash');
+  includes(mixed, 'اسنپ‌پی کالا (مشتری): ۳۲۵٬۰۰۰ تومان', 'the customer Snapp part line');
+  includes(mixed, 'نقدی / کارت کالا (مشتری، شامل کارمزد اسنپ‌پی ۵۰٬۰۰۰): ۳۷۵٬۰۰۰ تومان', 'the customer cash part line with fee');
+  includes(mixed, '💰 مبلغ کل مشتری: ۸۹۰٬۰۰۰ تومان', 'the mixed customer total');
   includes(mixed, 'واریزی اسنپ‌پی: ۲۷۵٬۰۰۰ تومان', 'the mixed settlement line');
 
   const cashText = buildInvoice(order);
-  excludes(cashText, 'اسنپ‌پی:', 'no Snapp lines on a cash invoice');
-  excludes(cashText, 'نقدی:', 'no cash-part line on a cash invoice');
-  excludes(cashText, 'تسویه اسنپ‌پی', 'no settlement line on a cash invoice');
+  excludes(cashText, 'اسنپ‌پی کالا', 'no Snapp goods line on a cash invoice');
+  excludes(cashText, 'دریافتی اسنپ‌پی', 'no Snapp receipts on a cash invoice');
+  excludes(cashText, 'واریزی اسنپ‌پی', 'no settlement line on a cash invoice');
 });
 
 /* --------------------------------------------- 12.6) merge rule (9.2 step 2) */

@@ -15,6 +15,7 @@ declare
   v_seed bigint := 14050507;
   v_sub bigint; v_base bigint; v_hp bigint; v_disc bigint; v_md bigint;
   v_bearer text; v_ship bigint; v_method text; v_mult numeric; v_s bigint; v_net bigint;
+  v_ship_pay text;
 begin
   -- OWNER: base 8M + hp 2M, courier, S 5M
   select * into r from public.order_amounts(10000000, 8000000, 2000000, 0, 'helia', 0, 'mixed', 5000000, 1.15, 5000);
@@ -209,6 +210,43 @@ begin
   select * into r from public.order_amounts(50000, 30000, 20000, 0, 'helia', 0, 'snapp', null, 1.15, 5000);
   if r.o_total <> 60000 or r.o_payout <> 50000 or r.o_owe <> 30000 or r.o_h_share <> 20000 then raise exception 'old11b'; end if;
 
+  -- ------------------------------------------ split goods/shipping payment --
+  -- goods Snapp + shipping cash: only the goods carry the multiplier
+  select * into r from public.order_amounts(650000, 500000, 150000, 0, 'helia', 190000, 'snapp', null, 1.15, 5000, 'cash');
+  if r.o_total <> 940000 or r.o_payout <> 840000 then raise exception 'split1 total'; end if;
+  if r.o_snapp_charge <> 750000 or r.o_cash_charge <> 190000 then raise exception 'split1 parts'; end if;
+  if r.o_snapp_deposit <> 650000 or r.o_snapp_fee <> 0 then raise exception 'split1 deposit'; end if;
+
+  -- all cash
+  select * into r from public.order_amounts(650000, 500000, 150000, 0, 'helia', 190000, 'cash', null, 1.15, 5000, 'cash');
+  if r.o_total <> 840000 or r.o_snapp_charge <> 0 or r.o_cash_charge <> 840000 or r.o_snapp_deposit <> 0 then raise exception 'split2'; end if;
+
+  -- all Snapp
+  select * into r from public.order_amounts(650000, 500000, 150000, 0, 'helia', 190000, 'snapp', null, 1.15, 5000, 'snapp');
+  if r.o_total <> 940000 or r.o_snapp_charge <> 940000 or r.o_cash_charge <> 0 or r.o_snapp_deposit <> 840000 then raise exception 'split3'; end if;
+
+  -- cash goods + shipping Snapp: shipping is added as-is, never multiplied
+  select * into r from public.order_amounts(650000, 500000, 150000, 0, 'helia', 190000, 'cash', null, 1.15, 5000, 'snapp');
+  if r.o_total <> 840000 or r.o_snapp_charge <> 190000 or r.o_cash_charge <> 650000 then raise exception 'split4 parts'; end if;
+  if r.o_snapp_deposit <> 190000 then raise exception 'split4 deposit'; end if;
+
+  -- mixed goods + shipping Snapp
+  select * into r from public.order_amounts(650000, 500000, 150000, 0, 'helia', 190000, 'mixed', 325000, 1.15, 5000, 'snapp');
+  if r.o_total <> 890000 or r.o_payout <> 840000 then raise exception 'split5 total'; end if;
+  if r.o_snapp_charge <> 515000 or r.o_cash_charge <> 375000 then raise exception 'split5 parts'; end if;
+  if r.o_snapp_deposit <> 465000 or r.o_snapp_fee <> 50000 then raise exception 'split5 deposit'; end if;
+
+  -- old 10-argument calls keep the old fallback (shipping follows goods)
+  select * into r from public.order_amounts(650000, 500000, 150000, 0, 'helia', 190000, 'snapp', null, 1.15, 5000);
+  if r.o_snapp_charge <> 940000 or r.o_cash_charge <> 0 then raise exception 'split old fallback'; end if;
+
+  begin
+    perform public.order_amounts(650000, 500000, 150000, 0, 'helia', 190000, 'cash', null, 1.15, 5000, 'card');
+    raise exception 'invalid shipping method should have raised';
+  exception when raise_exception then
+    if SQLERRM <> 'روش پرداخت هزینه ارسال نامعتبر است' then raise; end if;
+  end;
+
   -- --------------------------------------- generated invariant sweep (500) --
   for i in 1..500 loop
     v_seed := (v_seed * 1103515245 + 12345) % 2147483648;
@@ -225,6 +263,7 @@ begin
     v_md := case when v_bearer = 'mahdi' then v_disc when v_bearer = 'split' then v_disc / 2 else 0 end;
     if v_base - v_md < 0 then continue; end if;
     v_ship := case when (v_seed / 37) % 2 = 0 then 190000 else 0 end;
+    v_ship_pay := case when (v_seed / 53) % 2 = 0 then 'cash' else 'snapp' end;
     case (v_seed / 41) % 3
       when 0 then v_method := 'cash';
       when 1 then v_method := 'snapp';
@@ -246,7 +285,7 @@ begin
     end if;
     begin
       select * into r from public.order_amounts(
-        v_sub, v_base, v_hp, v_disc, v_bearer, v_ship, v_method, v_s, v_mult, 5000);
+        v_sub, v_base, v_hp, v_disc, v_bearer, v_ship, v_method, v_s, v_mult, 5000, v_ship_pay);
     exception when raise_exception then
       if SQLERRM = 'کارمزد اسنپ‌پی از مبلغ اسنپ‌پی بیشتر می‌شود؛ ضریب را بررسی کنید' then continue; end if;
       raise exception 'sweep % failed: %', i, SQLERRM;
@@ -257,9 +296,14 @@ begin
     if r.o_snapp_charge <> 0 and r.o_cash_charge <> 0 and r.o_total <> r.o_payout + r.o_snapp_fee then
       if v_method = 'mixed' then raise exception 'sweep % fee', i; end if;
     end if;
-    if v_method = 'mixed' and r.o_snapp_charge <> r.o_snapp_part then raise exception 'sweep % charge', i; end if;
+    if v_method = 'mixed' and r.o_snapp_charge <> r.o_snapp_part + (case when v_ship_pay = 'snapp' then v_ship else 0 end) then
+      raise exception 'sweep % charge', i;
+    end if;
+    if v_method = 'cash' and r.o_snapp_charge <> (case when v_ship_pay = 'snapp' then v_ship else 0 end) then
+      raise exception 'sweep % cash snapp', i;
+    end if;
   end loop;
 
-  raise notice 'ALL PASSED (mixed_payment.sql): OWNER/M1-M9, errors, old13, 500-combo sweep';
+  raise notice 'ALL PASSED (mixed_payment.sql): OWNER/M1-M9, errors, old13, split, 500-combo sweep';
 end;
 $$;

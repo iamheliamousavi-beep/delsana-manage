@@ -13,6 +13,8 @@ export type Order = {
   shipping_method: string;
   shipping_fee: number;
   method: string;
+  /** how the shipping fee is paid; null on old rows = follows `method` */
+  shipping_payment_method?: string | null;
   discount: number;
   discount_bearer: string;
   total: number;
@@ -66,7 +68,17 @@ export function shippingLabel(s: string): string {
 export function methodLabel(m: string): string {
   if (m === 'snapp') return 'اسنپ‌پی';
   if (m === 'mixed') return 'ترکیبی (نقدی + اسنپ‌پی)';
-  return 'نقدی';
+  return 'نقدی / کارت';
+}
+/** The shipping fee has only two channels (cash includes card). */
+export function shippingPaymentLabel(m: string | null | undefined): string {
+  return m === 'snapp' ? 'اسنپ‌پی' : 'نقدی / کارت';
+}
+/** Old rows had shipping paid through the same channel as the goods. */
+export function shippingPaymentMethod(order: Pick<Order, 'method' | 'shipping_payment_method'>): string {
+  const v = order.shipping_payment_method;
+  if (v === 'cash' || v === 'snapp') return v;
+  return order.method === 'mixed' ? 'cash' : order.method;
 }
 
 /* --------------------------------------------------------------- formatting */
@@ -268,7 +280,8 @@ const ADMIN_FIELD_FA: Record<string, string> = {
   postal_code: 'کد پستی',
   note: 'یادداشت',
   shipping_method: 'روش ارسال',
-  method: 'روش پرداخت',
+  method: 'روش پرداخت کالا',
+  shipping_payment_method: 'پرداخت هزینه ارسال',
   snapp_part: 'مبلغ اسنپ‌پی',
   discount: 'تخفیف',
   discount_bearer: 'بر عهده تخفیف',
@@ -308,6 +321,26 @@ export function buildProductDeletedDm(name: string): string {
 /* ------------------------------------------------------- invoice DM (8.3) */
 export function buildInvoice(order: Order): string {
   const lines: string[] = [];
+  const total = Number(order.total ?? 0);
+  const shipFee = Math.max(0, Number(order.shipping_fee ?? 0));
+  const shipPay = shippingPaymentMethod(order);
+  const shipSnap = shipPay === 'snapp' ? shipFee : 0;
+  const shipCash = shipFee - shipSnap;
+  const snap = Math.max(0, Number(order.snapp_charge ?? (order.method === 'snapp' ? total : 0)));
+  const cash = Math.max(0, Number(order.cash_charge ?? (
+    order.method === 'cash' ? total : Math.max(0, total - snap)
+  )));
+  const goodsCharge = Math.max(0, total - shipFee);
+  const goodsSnap = Math.max(0, snap - shipSnap);
+  const goodsCash = Math.max(0, cash - shipCash);
+  const deposit = order.snapp_deposit !== null && order.snapp_deposit !== undefined
+    ? Number(order.snapp_deposit)
+    : order.method === 'mixed'
+      ? Math.max(0, Number(order.snapp_part ?? 0) - Number(order.snapp_fee ?? 0) + shipSnap)
+      : order.method === 'snapp'
+        ? Math.max(0, Number(order.payout ?? (total - shipFee)) - shipFee + shipSnap)
+        : shipSnap;
+
   lines.push(`🧾 فاکتور سفارش — ${jalaliDateTime(order.created_at)}`);
   lines.push(`👤 مشتری: ${escapeHtml(order.customer)}`);
   lines.push(`📞 تلفن: ${escapeHtml(order.phone)}`);
@@ -321,15 +354,17 @@ export function buildInvoice(order: Order): string {
   if ((order.discount ?? 0) > 0) {
     lines.push(`🏷 تخفیف: ${money(order.discount)} (بر عهده ${bearerLabel(order.discount_bearer)})`);
   }
-  lines.push(`🚚 ارسال: ${shippingLabel(order.shipping_method)} — ${money(order.shipping_fee)} تومان`);
-  lines.push(`💳 پرداخت: ${methodLabel(order.method)}`);
+  lines.push(`🚚 ارسال: ${shippingLabel(order.shipping_method)} — ${money(shipFee)} تومان`);
+  lines.push(`💳 پرداخت کالا — ${methodLabel(order.method)}: ${money(goodsCharge)} تومان`);
+  lines.push(`🚚 پرداخت ارسال — ${shippingPaymentLabel(shipPay)}: ${money(shipFee)} تومان`);
   if (order.method === 'mixed') {
-    lines.push(`اسنپ‌پی (مشتری): ${money(order.snapp_charge ?? 0)} تومان`);
-    lines.push(`نقدی (مشتری، شامل کارمزد اسنپ‌پی ${money(order.snapp_fee ?? 0)}): ${money(order.cash_charge ?? 0)} تومان`);
+    lines.push(`اسنپ‌پی کالا (مشتری): ${money(goodsSnap)} تومان`);
+    lines.push(`نقدی / کارت کالا (مشتری، شامل کارمزد اسنپ‌پی ${money(order.snapp_fee ?? 0)}): ${money(goodsCash)} تومان`);
   }
-  lines.push(`💰 مبلغ کل مشتری: ${money(order.total)} تومان`);
-  if (order.method === 'snapp') lines.push(`تسویه اسنپ‌پی: ${money(order.payout ?? 0)} تومان`);
-  if (order.method === 'mixed') lines.push(`واریزی اسنپ‌پی: ${money(order.snapp_deposit ?? order.snapp_part ?? 0)} تومان`);
+  lines.push(`💰 مبلغ کل مشتری: ${money(total)} تومان`);
+  if (snap > 0) lines.push(`دریافتی اسنپ‌پی: ${money(snap)} تومان`);
+  if (cash > 0) lines.push(`دریافتی نقدی / کارت: ${money(cash)} تومان`);
+  if (deposit > 0) lines.push(`واریزی اسنپ‌پی: ${money(deposit)} تومان`);
   lines.push('');
   lines.push('📊 حساب‌وکتاب');
   lines.push(`به مغازه: ${money(order.owe)}`);

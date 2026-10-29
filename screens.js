@@ -556,6 +556,7 @@ var Screens = (function () {
     cart: [],           /* [{product_id, qty}] */
     pickerQ: '',
     built: false,
+    shipPayTouched: false,   /* shipping follows goods until the user picks one */
 
     render: function () {
       shell('view-neworder', 'v1', buildNewOrder);
@@ -629,11 +630,20 @@ var Screens = (function () {
       { value: 'snapp', label: 'اسنپ‌پی' },
       { value: 'mixed', label: 'ترکیبی' }
     ], 'cash');
+    var shipPaySeg = segmented('no-pay-ship', [
+      { value: 'cash', label: 'نقدی / کارت' },
+      { value: 'snapp', label: 'اسنپ‌پی' }
+    ], 'cash');
 
     var shipCard = el('div', { class: 'card' },
       el('div', { class: 'card-title' }, el('h3', { text: 'ارسال و پرداخت' })),
       el('div', { class: 'field' }, el('label', { text: 'روش ارسال' }), shipSeg),
-      el('div', { class: 'field' }, el('label', { text: 'روش پرداخت' }), paySeg),
+      el('div', { class: 'field' },
+        el('label', { text: 'پرداخت هزینه کالا' }), paySeg,
+        el('p', { class: 'hint', text: 'پرداخت مبلغ کالاها پس از تخفیف' })),
+      el('div', { class: 'field' },
+        el('label', { text: 'پرداخت هزینه ارسال' }), shipPaySeg,
+        el('p', { class: 'hint', text: 'به‌طور پیش‌فرض مثل روش پرداخت کالا؛ می‌توانید جدا کنید' })),
       el('div', { class: 'field', id: 'no-mult-wrap', hidden: true },
         el('label', { for: 'no-mult', text: 'ضریب اسنپ‌پی (اختیاری)' }),
         el('input', { type: 'text', id: 'no-mult', inputmode: 'decimal', placeholder: String(App.settings.snapp_multiplier) }),
@@ -690,6 +700,16 @@ var Screens = (function () {
     grid.appendChild(left);
     grid.appendChild(right);
     h.appendChild(grid);
+
+    /* shipping payment follows the goods method until the user changes it */
+    paySeg.addEventListener('change', function () {
+      if (neworder.shipPayTouched) return;
+      var m = radioValue('no-pay') || 'cash';
+      setRadio('no-pay-ship', m === 'mixed' ? 'cash' : m);
+    });
+    shipPaySeg.addEventListener('change', function () {
+      neworder.shipPayTouched = true;
+    });
 
     /* live updates */
     h.addEventListener('input', function (e) {
@@ -848,6 +868,7 @@ var Screens = (function () {
     if (!items.length) return null;
     var discount = UI.parseInt10($('#no-discount') ? $('#no-discount').value : '0') || 0;
     var method = radioValue('no-pay') || 'cash';
+    var shipPay = radioValue('no-pay-ship') || (method === 'mixed' ? 'cash' : method);
     var shipping = radioValue('no-ship') || 'post';
     var bearer = radioValue('no-bearer') || 'helia';
     var mult = null;
@@ -868,6 +889,7 @@ var Screens = (function () {
         discount_bearer: bearer,
         shipping_method: shipping,
         payment_method: method,
+        shipping_payment_method: shipPay,
         post_fee: App.settings.post_fee,
         snapp_multiplier: mult === null ? App.settings.snapp_multiplier : mult,
         rounding_step: App.settings.rounding_step,
@@ -908,9 +930,11 @@ var Screens = (function () {
     var statusWrap = $('#no-status-wrap');
     var bearerWrap = $('#no-bearer-wrap');
     var method = radioValue('no-pay') || 'cash';
+    var shipPay = radioValue('no-pay-ship') || (method === 'mixed' ? 'cash' : method);
+    var hasSnapp = method === 'snapp' || method === 'mixed' || shipPay === 'snapp';
     if (multWrap) multWrap.hidden = method !== 'snapp' && method !== 'mixed';
     if (partWrap) partWrap.hidden = method !== 'mixed';
-    if (statusWrap) statusWrap.hidden = method !== 'cash';
+    if (statusWrap) statusWrap.hidden = hasSnapp;
     var discount = UI.parseInt10($('#no-discount') ? $('#no-discount').value : '0') || 0;
     if (bearerWrap) bearerWrap.hidden = !(discount > 0);
 
@@ -962,17 +986,23 @@ var Screens = (function () {
       ['هزینه ارسال (' + UI.shippingLabel(r.shipping_method) + ')', UI.fmtMoney(r.shipping_fee), '']
     ];
     if (method === 'mixed') {
-      rows.push(['پرداخت با اسنپ‌پی (مشتری)', UI.fmtMoney(r.snapp_charge), '']);
-      rows.push(['پرداخت نقدی (مشتری)', UI.fmtMoney(r.cash_charge), 'cash']);
+      rows.push(['پرداخت کالا با اسنپ‌پی (مشتری)', UI.fmtMoney(r.goods_snapp_charge), '']);
+      rows.push(['پرداخت کالا نقدی/کارت (مشتری)', UI.fmtMoney(r.goods_cash_charge), 'cash']);
     }
     rows.push(
-      [method === 'snapp' ? 'مبلغ اسنپ‌پی شامل کارمزد' : 'مبلغ قابل پرداخت مشتری',
-        UI.fmtMoney(r.customer_total), 'total'],
-      ['پرداختی به مغازه', UI.fmtMoney(r.owe), ''],
-      ['سهم پیج', UI.fmtMoney(r.h_share), '']
+      ['پرداخت هزینه کالا (' + UI.methodLabel(method) + ')', UI.fmtMoney(r.goods_charge), ''],
+      ['پرداخت هزینه ارسال (' + UI.shippingPaymentLabel(r.shipping_payment_method) + ')',
+        UI.fmtMoney(r.shipping_charge), ''],
+      ['مبلغ قابل پرداخت مشتری', UI.fmtMoney(r.customer_total), 'total']
     );
-    if (method === 'snapp') rows.push(['تسویه اسنپ‌پی (نقدی‌مانند)', UI.fmtMoney(r.payout), '']);
-    if (method === 'mixed') rows.push(['واریزی اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), '']);
+    if (r.snapp_charge > 0) rows.push(['دریافتی اسنپ‌پی', UI.fmtMoney(r.snapp_charge), '']);
+    if (r.cash_charge > 0) rows.push(['دریافتی نقدی/کارت', UI.fmtMoney(r.cash_charge), 'cash']);
+    rows.push(
+      ['پرداختی به مغازه', UI.fmtMoney(r.owe), ''],
+      ['سهم پیج', UI.fmtMoney(r.h_share), '']);
+    if (r.snapp_deposit > 0) {
+      rows.push(['واریزی اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), '']);
+    }
 
     rows.forEach(function (row) {
       wrap.appendChild(el('div', { class: 'sum-row ' + (row[2] || '') },
@@ -992,8 +1022,10 @@ var Screens = (function () {
       if (n) n.value = '';
     });
     var s = $('#no-search'); if (s) s.value = '';
+    neworder.shipPayTouched = false;
     setRadio('no-ship', 'post');
     setRadio('no-pay', 'cash');
+    setRadio('no-pay-ship', 'cash');
     setRadio('no-bearer', 'helia');
     var st = $('#no-status'); if (st) st.value = 'new';
     var hint = $('#no-postal-hint');
@@ -1008,10 +1040,12 @@ var Screens = (function () {
     var postal = ($('#no-postal').value || '').trim();
     var note = ($('#no-note').value || '').trim();
     var method = radioValue('no-pay') || 'cash';
+    var shipPay = radioValue('no-pay-ship') || (method === 'mixed' ? 'cash' : method);
     var shipping = radioValue('no-ship') || 'post';
     var bearer = radioValue('no-bearer') || 'helia';
     var discount = UI.parseInt10($('#no-discount').value) || 0;
-    var status = method === 'cash' ? ($('#no-status') || {}).value || 'new' : null;
+    var hasSnapp = method === 'snapp' || method === 'mixed' || shipPay === 'snapp';
+    var status = hasSnapp ? null : ($('#no-status') || {}).value || 'new';
 
     if (!neworder.cart.length) { UI.toast('حداقل یک کالا انتخاب کنید', 'warn'); return; }
     var goneLine = neworder.cart.filter(function (line) {
@@ -1052,10 +1086,12 @@ var Screens = (function () {
     var r = orderCalc();
     if (r && r.error) { UI.toast(r.error, 'warn'); return; }
 
-    var confirmText = 'سفارش «' + customer + '» به مبلغ ' + UI.money(r.customer_total) + ' ثبت شود؟';
+    var confirmText = 'سفارش «' + customer + '» به مبلغ ' + UI.money(r.customer_total) +
+      ' ثبت شود؟\nکالا: ' + UI.money(r.goods_charge) + ' — ' + UI.methodLabel(method) +
+      '\nارسال: ' + UI.money(r.shipping_charge) + ' — ' + UI.shippingPaymentLabel(r.shipping_payment_method);
     if (method === 'mixed') {
-      confirmText = 'سفارش «' + customer + '» به مبلغ ' + UI.money(r.customer_total) +
-        ' (اسنپ‌پی ' + UI.money(r.snapp_charge) + ' + نقدی ' + UI.money(r.cash_charge) + ') ثبت شود؟';
+      confirmText += '\nاسنپ‌پی کالا ' + UI.money(r.goods_snapp_charge) +
+        ' + نقدی کالا ' + UI.money(r.goods_cash_charge);
     }
     var yes = await UI.confirm(confirmText, { title: 'ثبت سفارش', okLabel: 'ثبت نهایی' });
     if (!yes) return;
@@ -1071,6 +1107,7 @@ var Screens = (function () {
           postal_code: UI.normalizePostal(postal),
           shipping_method: shipping,
           method: method,
+          shipping_payment_method: shipPay,
           discount: discount,
           discount_bearer: bearer,
           snapp_multiplier: mult,
@@ -1239,7 +1276,9 @@ var Screens = (function () {
     var head = el('div', { class: 'order-head' },
       el('div', { class: 'who' },
         el('div', { class: 'cust', text: o.customer }),
-        el('div', { class: 'sub', text: UI.fmtDateTime(o.created_at) + ' · ' + UI.methodLabel(o.method) + ' · ' + UI.shippingLabel(o.shipping_method) })),
+        el('div', { class: 'sub', text: UI.fmtDateTime(o.created_at) + ' · ' + UI.methodLabel(o.method) +
+          ' · ' + UI.shippingLabel(o.shipping_method) +
+          ' · پرداخت ارسال: ' + UI.shippingPaymentLabel(Calc.shippingPaymentMethod(o)) })),
       el('div', { class: 'order-actions' },
         UI.statusPill(o.status),
         /* section 6: shipped, still waiting for the postal code */
@@ -1305,16 +1344,23 @@ var Screens = (function () {
     if (o.discount > 0) {
       money.appendChild(moneyCell('تخفیف (' + UI.bearerLabel(o.discount_bearer) + ')', UI.fmtMoney(o.discount), 'warn'));
     }
-    if (o.method === 'snapp') {
-      money.appendChild(moneyCell('تسویه اسنپ‌پی', UI.fmtMoney(o.payout)));
-    }
+    var split = Calc.orderSplit(o);
+    money.appendChild(moneyCell('پرداخت کالا (' + UI.methodLabel(o.method) + ')', UI.fmtMoney(split.goods_charge)));
+    money.appendChild(moneyCell('پرداخت ارسال (' + UI.shippingPaymentLabel(split.shipping_payment_method) + ')',
+      UI.fmtMoney(split.shipping_charge)));
     if (o.method === 'mixed') {
-      money.appendChild(moneyCell('اسنپ‌پی (مشتری)', UI.fmtMoney(o.snapp_charge)));
-      money.appendChild(moneyCell('نقدی (مشتری، شامل کارمزد)', UI.fmtMoney(o.cash_charge)));
-      money.appendChild(moneyCell('واریزی اسنپ‌پی', UI.fmtMoney(o.snapp_deposit != null ? o.snapp_deposit : Calc.snappDeposit(o))));
+      money.appendChild(moneyCell('اسنپ‌پی کالا (مشتری)', UI.fmtMoney(split.goods_snapp_charge)));
+      money.appendChild(moneyCell('نقدی کالا (مشتری، شامل کارمزد)', UI.fmtMoney(split.goods_cash_charge)));
+    } else {
+      if (split.snapp_charge > 0) {
+        money.appendChild(moneyCell('دریافتی اسنپ‌پی', UI.fmtMoney(split.snapp_charge)));
+      }
+      if (split.cash_charge > 0) {
+        money.appendChild(moneyCell('دریافتی نقدی/کارت', UI.fmtMoney(split.cash_charge)));
+      }
     }
-    if (o.shipping_fee > 0) {
-      money.appendChild(moneyCell('هزینه پست', UI.fmtMoney(o.shipping_fee)));
+    if (Calc.snappDeposit(o) > 0) {
+      money.appendChild(moneyCell('واریزی اسنپ‌پی', UI.fmtMoney(Calc.snappDeposit(o))));
     }
     card.appendChild(money);
 
@@ -1440,7 +1486,8 @@ var Screens = (function () {
 
   var ADMIN_FIELD_FA = {
     customer: 'مشتری', phone: 'تلفن', address: 'آدرس', postal_code: 'کد پستی',
-    note: 'یادداشت', shipping_method: 'روش ارسال', method: 'روش پرداخت',
+    note: 'یادداشت', shipping_method: 'روش ارسال', method: 'روش پرداخت کالا',
+    shipping_payment_method: 'پرداخت هزینه ارسال',
     snapp_part: 'مبلغ اسنپ‌پی', discount: 'تخفیف', discount_bearer: 'بر عهده تخفیف',
     tracking: 'کد رهگیری', status: 'وضعیت', shipping_fee: 'هزینه ارسال',
     snapp_multiplier: 'ضریب اسنپ‌پی', rounding_step: 'گرد کردن', items: 'کالاها',
@@ -1469,6 +1516,9 @@ var Screens = (function () {
     var cPay = adminSel('ae-pay', [
       { value: 'cash', label: 'نقدی / کارت' }, { value: 'snapp', label: 'اسنپ‌پی' }, { value: 'mixed', label: 'ترکیبی' }
     ], o.method);
+    var cShipPay = adminSel('ae-ship-pay', [
+      { value: 'cash', label: 'نقدی / کارت' }, { value: 'snapp', label: 'اسنپ‌پی' }
+    ], Calc.shippingPaymentMethod(o));
     var cBearer = adminSel('ae-bearer', [
       { value: 'helia', label: 'پیج' }, { value: 'mahdi', label: 'مغازه' }, { value: 'split', label: 'نصف‌نصف' }
     ], o.discount_bearer);
@@ -1562,6 +1612,7 @@ var Screens = (function () {
       } catch (e) { return { error: e.message }; }
       if (!items.length) return { error: 'حداقل یک کالا انتخاب کنید' };
       var method = cPay.value, ship = cShip.value, bearer = cBearer.value;
+      var shipPay = cShipPay.value;
       var discount = UI.parseInt10(fDisc.value) || 0;
       var postFee = UI.parseInt10(fShipFee.value);
       var mult = UI.parseFloat10(fMult.value);
@@ -1578,6 +1629,7 @@ var Screens = (function () {
         return Calc.calcOrder({
           items: items, discount: discount, discount_bearer: bearer,
           shipping_method: ship, payment_method: method,
+          shipping_payment_method: shipPay,
           post_fee: postFee, snapp_multiplier: mult, rounding_step: step,
           snapp_part: part
         });
@@ -1602,16 +1654,22 @@ var Screens = (function () {
       }
       var rows = [
         ['مبلغ کالاها', UI.fmtMoney(r.sub), ''],
-        ['تخفیف', '− ' + UI.fmtMoney(r.discount), '']
+        ['تخفیف', '− ' + UI.fmtMoney(r.discount), ''],
+        ['هزینه ارسال (' + UI.shippingLabel(r.shipping_method) + ')', UI.fmtMoney(r.shipping_fee), '']
       ];
       if (r.payment_method === 'mixed') {
-        rows.push(['پرداخت با اسنپ‌پی (مشتری)', UI.fmtMoney(r.snapp_charge), '']);
-        rows.push(['پرداخت نقدی (مشتری)', UI.fmtMoney(r.cash_charge), 'cash']);
+        rows.push(['پرداخت کالا با اسنپ‌پی (مشتری)', UI.fmtMoney(r.goods_snapp_charge), '']);
+        rows.push(['پرداخت کالا نقدی/کارت (مشتری)', UI.fmtMoney(r.goods_cash_charge), 'cash']);
       }
-      rows.push(['مبلغ قابل پرداخت مشتری', UI.fmtMoney(r.customer_total), 'total'],
-        ['واریزی اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), ''],
+      rows.push(
+        ['پرداخت هزینه کالا (' + UI.methodLabel(r.payment_method) + ')', UI.fmtMoney(r.goods_charge), ''],
+        ['پرداخت هزینه ارسال (' + UI.shippingPaymentLabel(r.shipping_payment_method) + ')', UI.fmtMoney(r.shipping_charge), ''],
+        ['مبلغ قابل پرداخت مشتری', UI.fmtMoney(r.customer_total), 'total'],
         ['پرداختی به مغازه', UI.fmtMoney(r.owe), ''],
         ['سهم پیج', UI.fmtMoney(r.h_share), '']);
+      if (r.snapp_deposit > 0) {
+        rows.push(['واریزی اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), '']);
+      }
       rows.forEach(function (row) {
         sumBox.appendChild(el('div', { class: 'sum-row ' + (row[2] || '') },
           el('span', { class: 'k', text: row[0] }),
@@ -1632,7 +1690,8 @@ var Screens = (function () {
       fieldWrap('وضعیت', cStatus),
       fieldWrap('کد رهگیری', fTrack),
       fieldWrap('روش ارسال', cShip),
-      fieldWrap('روش پرداخت', cPay),
+      fieldWrap('پرداخت هزینه کالا', cPay),
+      fieldWrap('پرداخت هزینه ارسال', cShipPay),
       el('div', { class: 'field' },
         el('label', { text: 'مبلغ اسنپ‌پی مشتری (تومان)' }), fPart,
         el('p', { class: 'hint', text: 'مبلغی که مشتری با اعتبار اسنپ‌پی خودش پرداخت می‌کند؛ کارمزد جدا و نقدی گرفته می‌شود' })),
@@ -1687,6 +1746,7 @@ var Screens = (function () {
       note: fNote.value,
       shipping_method: cShip.value,
       method: method,
+      shipping_payment_method: cShipPay.value,
       snapp_part: part,
       discount: UI.parseInt10(fDisc.value) || 0,
       discount_bearer: cBearer.value,
@@ -1828,10 +1888,12 @@ var Screens = (function () {
   function exportCSV() {
     var header = [
       'id', 'created_at (ISO)', 'customer', 'phone', 'postal_code', 'address', 'items',
-      'payment', 'shipping', 'shipping_fee', 'snapp_multiplier', 'rounding_step',
+      'payment', 'shipping', 'shipping_payment', 'shipping_fee', 'snapp_multiplier', 'rounding_step',
       'discount', 'discount_bearer', 'shop_discount', 'page_discount',
       'customer_total', 'owe_to_shop', 'page_share', 'snapp_payout',
       'snapp_part', 'snapp_charge', 'cash_charge', 'snapp_fee', 'snapp_deposit',
+      'goods_charge', 'shipping_charge', 'goods_snapp_charge', 'goods_cash_charge',
+      'shipping_snapp_charge', 'shipping_cash_charge',
       'status', 'tracking', 'pinned', 'pin_note', 'note'
     ];
 
@@ -1842,12 +1904,15 @@ var Screens = (function () {
       var items = (o.items || []).map(function (it) {
         return it.name + ' ×' + it.qty;
       }).join(' | ');
+      var split = Calc.orderSplit(o);
       rows.push([
         o.id, o.created_at, o.customer, o.phone, o.postal_code, o.address, items,
-        o.method, o.shipping_method, o.shipping_fee, o.snapp_multiplier, o.rounding_step,
+        o.method, o.shipping_method, split.shipping_payment_method, o.shipping_fee, o.snapp_multiplier, o.rounding_step,
         o.discount, UI.bearerLabel(o.discount_bearer), o.mahdi_discount, o.helia_discount,
         o.total, o.owe, o.h_share, o.payout,
         o.snapp_part || 0, o.snapp_charge || 0, o.cash_charge || 0, o.snapp_fee || 0, o.snapp_deposit || 0,
+        split.goods_charge, split.shipping_charge, split.goods_snapp_charge, split.goods_cash_charge,
+        split.shipping_snapp_charge, split.shipping_cash_charge,
         UI.statusLabel(o.status), o.tracking, o.pinned ? 'yes' : 'no', o.pin_note, o.note
       ]);
     });
@@ -2530,6 +2595,7 @@ var Screens = (function () {
       var money = UI.money(cfg.kind === 'snapp' ? Calc.snappDeposit(o)
         : (cfg.kind === 'owed' ? o.owe : o.total));
       var metaText = UI.fmtDateTime(o.created_at) + ' · ' + money;
+      var split = Calc.orderSplit(o);
       var pills = el('span', { class: 'row-pills' });
 
       /* section 6 — shipped without a code yet */
@@ -2572,12 +2638,14 @@ var Screens = (function () {
         el('div', { class: 'grow' },
           el('div', { class: 'name', text: o.customer }),
           el('div', { class: 'meta', text: metaText }),
-          /* mixed rows in the Snapp bucket show both parts */
-          (cfg.kind === 'snapp' && o.method === 'mixed')
+          /* split rows in the Snapp bucket show both parts */
+          (cfg.kind === 'snapp' && split.cash_charge > 0)
             ? el('div', {
                 class: 'meta',
-                text: 'ترکیبی: اسنپ‌پی ' + UI.fmtMoney(o.snapp_part) +
-                      ' + نقدی ' + UI.fmtMoney(o.cash_charge)
+                text: 'اسنپ‌پی ' + UI.fmtMoney(split.snapp_charge) +
+                      ' + نقدی/کارت ' + UI.fmtMoney(split.cash_charge) +
+                      ' (کالا: ' + UI.methodLabel(o.method) +
+                      ' · ارسال: ' + UI.shippingPaymentLabel(split.shipping_payment_method) + ')'
               })
             : null,
           pills),
@@ -2745,12 +2813,28 @@ var Screens = (function () {
         .sort(function (a, b) { return b.qty - a.qty; }).slice(0, 5);
       var maxQty = top.length ? top[0].qty : 1;
 
-      var cashCount = rows.filter(function (o) { return o.method === 'cash'; }).length;
-      var snappCount = rows.filter(function (o) { return o.method === 'snapp'; }).length;
-      var mixedCount = rows.length - cashCount - snappCount;
-      /* money by channel: a mixed order contributes to both sides */
+      /* an order can fund both channels (goods Snapp + shipping cash, mixed,
+         or cash goods + Snapp shipping), so count channels, not methods */
+      var cashCount = rows.filter(function (o) { return Calc.orderSplit(o).cash_charge > 0; }).length;
+      var snappCount = rows.filter(function (o) { return Calc.orderSplit(o).snapp_charge > 0; }).length;
+      var bothCount = rows.filter(function (o) {
+        var s = Calc.orderSplit(o);
+        return s.cash_charge > 0 && s.snapp_charge > 0;
+      }).length;
+      var onlyCash = rows.filter(function (o) {
+        var s = Calc.orderSplit(o);
+        return s.cash_charge > 0 && s.snapp_charge === 0;
+      }).length;
+      var onlySnapp = rows.filter(function (o) {
+        var s = Calc.orderSplit(o);
+        return s.snapp_charge > 0 && s.cash_charge === 0;
+      }).length;
+      /* money by channel: every order contributes only its own channel parts */
       var cashSum = rows.reduce(function (s, o) { return s + Number(o.cash_charge || 0); }, 0);
       var snappSum = rows.reduce(function (s, o) { return s + Number(o.snapp_charge || 0); }, 0);
+      var shippingSnapCount = rows.filter(function (o) {
+        return Calc.shippingPaymentMethod(o) === 'snapp';
+      }).length;
       var postCount = rows.filter(function (o) { return o.shipping_method === 'post'; }).length;
       var courierCount = rows.length - postCount;
 
@@ -2766,18 +2850,19 @@ var Screens = (function () {
       var splitCard = el('div', { class: 'card' },
         el('div', { class: 'card-title' }, el('h3', { text: 'نقدی در برابر اسنپ‌پی' })),
         el('div', { class: 'split' },
-          el('i', { class: 's1', style: 'width:' + (rows.length ? (cashCount / rows.length * 100) : 0) + '%' }),
-          el('i', { class: 's2', style: 'width:' + (rows.length ? (snappCount / rows.length * 100) : 0) + '%' }),
-          el('i', { style: 'background:var(--warn);width:' + (rows.length ? (mixedCount / rows.length * 100) : 0) + '%' })),
+          el('i', { class: 's1', style: 'width:' + (rows.length ? (onlyCash / rows.length * 100) : 0) + '%' }),
+          el('i', { class: 's2', style: 'width:' + (rows.length ? (onlySnapp / rows.length * 100) : 0) + '%' }),
+          el('i', { style: 'background:var(--warn);width:' + (rows.length ? (bothCount / rows.length * 100) : 0) + '%' })),
         el('div', { class: 'split-legend' },
           el('span', {}, el('i', { style: 'background:var(--brand)' }),
             'نقدی: ' + UI.toFaDigits(cashCount) + ' سفارش · ' + UI.fmtMoney(cashSum)),
           el('span', {}, el('i', { style: 'background:var(--info)' }),
             'اسنپ‌پی: ' + UI.toFaDigits(snappCount) + ' سفارش · ' + UI.fmtMoney(snappSum)),
           el('span', {}, el('i', { style: 'background:var(--warn)' }),
-            'ترکیبی: ' + UI.toFaDigits(mixedCount) + ' سفارش')),
+            'ترکیبی: ' + UI.toFaDigits(bothCount) + ' سفارش')),
         el('p', { class: 'hint', style: 'margin-top:8px',
-          text: 'ارسال: پست ' + UI.toFaDigits(postCount) + ' · پیک ' + UI.toFaDigits(courierCount) })
+          text: 'ارسال: پست ' + UI.toFaDigits(postCount) + ' · پیک ' + UI.toFaDigits(courierCount) +
+                ' · هزینه ارسال با اسنپ‌پی: ' + UI.toFaDigits(shippingSnapCount) })
       );
       body.appendChild(splitCard);
 

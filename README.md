@@ -150,23 +150,36 @@ partners see exactly the same numbers.
 | Field | Formula |
 |-------|---------|
 | `shipping_fee` | `post_fee` if shipping is `post`, else `0` |
+| `shipping_payment_method` | how the shipping fee is paid: `cash` (نقدی/کارت) or `snapp`. New orders choose it separately from the goods method; omitted/old rows follow the goods method (`mixed` → cash) |
 | `sub` | `Σ q · unit_sum`, `net = sub − discount` |
-| Cash total | `net + shipping_fee` |
-| Snapp total | `roundToStep(net · snapp_multiplier, rounding_step) + shipping_fee` |
-| Mixed: Snapp part `S` | entered by the seller, `0 < S < net`, integer ≥ 1 — **the exact amount the customer pays through Snapp Pay** (never multiplied) |
+| `goods_charge` | `total − shipping_fee` — the goods part of the customer total |
+| `shipping_charge` | `shipping_fee` — the shipping part of the customer total |
+| Cash goods | `net` charged to the cash/card channel |
+| Snapp goods | `roundToStep(net · snapp_multiplier, rounding_step)` charged to Snapp Pay |
+| Mixed: Snapp part `S` | entered by the seller, `0 < S < net`, integer ≥ 1 — **the exact amount the customer pays through Snapp Pay for the goods** (never multiplied) |
 | Mixed: Snapp fee | `snapp_fee = max(0, snappRound(S) − S)` (exact integer math, §3 of the mixed-payment prompt); **the customer pays it in cash**. Tiny `S` with `snappRound(S) < S` clamps the fee to 0 with a non-blocking warning |
-| Mixed: customer pays via Snapp | `snapp_charge = S` exactly |
-| Mixed: customer pays cash | `cash_charge = (net − S) + snapp_fee + shipping_fee` |
-| Mixed: customer total | `snapp_charge + cash_charge = net + shipping_fee + snapp_fee` |
+| Shipping via Snapp | `shipping_snapp_charge = shipping_fee`; otherwise `0`. The shipping fee is **never multiplied** |
+| Customer total | `goods_charge + shipping_charge` |
+| `snapp_charge` | goods Snapp + shipping Snapp |
+| `cash_charge` | goods cash + Snapp fee + shipping cash |
+| Mixed customer total | `snapp_charge + cash_charge = net + shipping_fee + snapp_fee` |
 | `payout` (Snapp settles) | `net + shipping_fee` (same as a cash sale) |
-| Snapp deposit to the page | `0` (cash), `payout` (snapp), `S − snapp_fee` (mixed) |
+| Snapp deposit to the page | goods Snapp deposit + shipping Snapp: `0` (all cash), `net + shipping_fee` (all Snapp), `S − snapp_fee` + shipping Snapp (mixed) |
 | `owe` (page → shop) | `Σ q · base − shop_discount + shipping_fee` |
 | `h_share` | `Σ q · hp − page_discount` |
 
 Discount bearer: `helia` (پیج) → the page pays all of it, `mahdi` (مغازه) → the shop pays all of
 it, `split` → half each. Invariants, for **every** method: `owe + h_share == payout`,
-`snapp_charge + cash_charge == total`, `snapp_deposit + cash_charge == payout`, and for mixed
-`snapp_charge == snapp_part`, `snapp_deposit == snapp_part − snapp_fee`, `total == payout + snapp_fee`.
+`snapp_charge + cash_charge == total`, `snapp_deposit + cash_charge == payout`,
+`goods_charge + shipping_charge == total`; for mixed additionally
+`snapp_charge == snapp_part + shipping_snapp_charge`,
+`snapp_deposit == snapp_part − snapp_fee + shipping_snapp_charge`,
+`total == payout + snapp_fee`.
+
+The split labels are shown everywhere: new-order summary, order card, admin edit, invoice,
+Telegram, CSV and reports. Cash sums count only `cash_charge` (goods cash + fee + cash
+shipping); Snapp sums count only `snapp_charge` (goods Snapp + Snapp shipping), so nothing is
+double-counted.
 
 Everything is recomputed **on the server** inside `create_order`; the client numbers are never trusted.
 
@@ -178,7 +191,9 @@ awaiting_snapp ─────► paid       │
         └──────────► cancelled ◄─┘ (from new / awaiting_snapp / paid / settled)
 ```
 
-- Cash orders start at `new` or `paid` (chosen when creating); Snapp and mixed (`ترکیبی`) orders start at `awaiting_snapp`.
+- Cash-only orders start at `new` or `paid` (chosen when creating); any order with a Snapp
+  portion — Snapp/mixed goods, or cash goods with the shipping paid via Snapp — starts at
+  `awaiting_snapp`.
 - A **post** order can be marked `shipped` **without** a tracking code; the code may arrive days
   later and is then saved from the order card, from Accounts («ثبت کد») or from the ship dialog.
   Orders waiting for their code are marked «منتظر کد رهگیری».
@@ -191,10 +206,10 @@ awaiting_snapp ─────► paid       │
 | Tab | What it does |
 |-----|--------------|
 | **محصولات** | Live prices (cash + Snapp), availability pill, search, «عدم موجودی» / «موجود شد» (shop only, existing orders untouched), products are archived, never deleted, CSV export. Shop edits name, «قیمت از مغازه» and «سود پیج», adds products and runs a bulk price update (% or fixed) on the shop price. Page edits only «سود پیج». **Admin** additionally sees «ویرایش کامل» (name, base price, hp, available, archived in one form) and «حذف کامل محصول» (typed-«حذف» confirm showing how many orders reference it; old orders keep their snapshots). |
-| **سفارش جدید** | Product picker + quantities (an unavailable product blocks the save until it is removed), customer/phone/address/10-digit postal code, shipping, payment (cash / Snapp / mixed «ترکیبی» with a Snapp-part amount + ۲۵٪/۵۰٪/۷۵٪ helper chips), Snapp multiplier override, discount + bearer, live summary. For mixed the label reads «مبلغ اسنپ‌پی مشتری (تومان)»: what the customer pays via Snapp; the fee is shown inside the cash row («شامل کارمزد اسنپ‌پی») and «واریزی اسنپ‌پی به پیج» shows what Snapp settles. |
-| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment incl. «ترکیبی», shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export (with `snapp_part`, `snapp_charge`, `cash_charge`, `snapp_fee`, `snapp_deposit`), and «ایمپورت لیست پست» (section 8.1). **Admin** additionally sees «ویرایش کامل» (full-screen modal: customer fields, all 7 statuses, tracking, shipping/payment with live summary, discount + bearer, the order's own settings snapshot, editable line list) and «حذف سفارش» (typed-«حذف» confirm; the card disappears, realtime removes it elsewhere). |
-| **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`, sums and rows by Snapp deposit — `S` for mixed, `payout` for snapp — with a part breakdown on mixed rows), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
-| **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, «سهم پیج», «پرداختی به مغازه», top-5 products, cash vs Snapp vs mixed counts with money split by channel (`cashSum = Σ cash_charge`, `snappSum = Σ snapp_charge`), post vs courier, discounts by bearer — the same for both partners. |
+| **سفارش جدید** | Product picker + quantities (an unavailable product blocks the save until it is removed), customer/phone/address/10-digit postal code, shipping, **goods payment** (cash / Snapp / mixed «ترکیبی» with a Snapp-part amount + ۲۵٪/۵۰٪/۷۵٪ helper chips) and **shipping payment** (نقدی/کارت or Snapp; follows the goods method until changed), Snapp multiplier override, discount + bearer, live summary with `پرداخت هزینه کالا` and `پرداخت هزینه ارسال` plus channel receipts. For mixed the label reads «مبلغ اسنپ‌پی مشتری (تومان)»: what the customer pays via Snapp for the goods; the fee is shown inside the cash row («شامل کارمزد اسنپ‌پی») and «واریزی اسنپ‌پی به پیج» shows what Snapp settles. |
+| **سفارش‌ها** | Pinned first then newest; search (name/phone/postal/product/tracking), filters (status, payment incl. «ترکیبی», shipping, pinned, «بدون کد رهگیری»), editable tracking code, status buttons (shipping works without a code), «ویرایش اطلاعات» for customer data only, «فاکتور در تلگرام من», pin + reason, CSV export (with `shipping_payment`, `snapp_part`, `snapp_charge`, `cash_charge`, `snapp_fee`, `snapp_deposit`, `goods_charge`, `shipping_charge` and the per-channel goods/shipping parts), and «ایمپورت لیست پست» (section 8.1). **Admin** additionally sees «ویرایش کامل» (full-screen modal: customer fields, all 7 statuses, tracking, shipping/payment with live summary, discount + bearer, the order's own settings snapshot, editable line list) and «حذف سفارش» (typed-«حذف» confirm; the card disappears, realtime removes it elsewhere). |
+| **حساب‌ها** | «پول هنوز نرسیده» (`new`), «در انتظار تسویه اسنپ‌پی» (`awaiting_snapp`, sums and rows by Snapp deposit — goods Snapp deposit + Snapp shipping; rows with a cash part show the full breakdown), «بدهی پیج به مغازه» (`paid`), (shop only) «آماده ارسال» (`settled`) and «منتظر کد رهگیری»; per-row and bulk "mark as …" buttons, checkbox selection survives a live refresh, stale-money warning pills with a pin shortcut. |
+| **گزارش‌ها** | Today / 7d / 30d / all / custom range: counts, sales, «سهم پیج», «پرداختی به مغازه», top-5 products, cash vs Snapp vs split counts with money split strictly by channel (`cashSum = Σ cash_charge`, `snappSum = Σ snapp_charge`, counts include any order with that channel), post vs courier, shipping-paid-via-Snapp count, discounts by bearer — the same for both partners. |
 | **تنظیمات** | `post_fee`, `snapp_multiplier`, `rounding_step` (new orders only, each order snapshots the values it used), the «اعلان‌ها» card (Telegram link + phone notifications, plus the admin-only shared «حالت تست (بی‌صدا)» which drops the automatic partner/channel/push notifications while you try features — your own «اعلان آزمایشی» and invoice still work), **the admin-only «تاریخچه تغییرات ادمین» card** (latest 100 audit rows with a «بازگردانی» button on deletions), and the backup reminder. |
 
 **Roles.** Version 2 has no secret numbers any more: both partners see `base`, `hp`, totals,
