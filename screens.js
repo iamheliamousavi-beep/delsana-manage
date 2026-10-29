@@ -1537,6 +1537,7 @@ var Screens = (function () {
     var fShipFee = el('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', value: String(o.shipping_fee) });
     var fStep = el('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', value: String(o.rounding_step) });
     var fPart = el('input', { type: 'text', inputmode: 'numeric', value: o.method === 'mixed' ? String(o.snapp_part) : '' });
+    var fHeliaProfit = el('input', { type: 'text', inputmode: 'numeric', dir: 'ltr', value: String(o.helia_discount || 0) });
 
     /* editable line list (admin may override the price snapshot per line) */
     var linesBox = el('div', { id: 'ae-lines' });
@@ -1696,6 +1697,7 @@ var Screens = (function () {
         el('label', { text: 'مبلغ اسنپ‌پی مشتری (تومان)' }), fPart,
         el('p', { class: 'hint', text: 'مبلغی که مشتری با اعتبار اسنپ‌پی خودش پرداخت می‌کند؛ کارمزد جدا و نقدی گرفته می‌شود' })),
       fieldWrap('تخفیف (تومان)', fDisc),
+      fieldWrap('یافطة Helia (تومان)', fHeliaProfit),
       fieldWrap('تخفیف بر عهده', cBearer),
       el('details', { class: 'history' },
         el('summary', { text: 'تنظیمات این سفارش' }),
@@ -1749,6 +1751,7 @@ var Screens = (function () {
       shipping_payment_method: cShipPay.value,
       snapp_part: part,
       discount: UI.parseInt10(fDisc.value) || 0,
+      helia_discount: UI.parseInt10(fHeliaProfit.value) || 0,
       discount_bearer: cBearer.value,
       tracking: fTrack.value.trim(),
       status: cStatus.value,
