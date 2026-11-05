@@ -215,7 +215,7 @@
       'shipping_fee, snapp_multiplier, rounding_step, discount, discount_bearer, mahdi_discount, ' +
       'helia_discount, total, owe, h_share, payout, status, status_history, tracking, note, ' +
       'pinned, pin_note, pinned_at, snapp_part, snapp_charge, cash_charge, snapp_fee, snapp_deposit, ' +
-      'shipping_payment_method',
+      'shipping_payment_method, fee_in_snapp',
       'created_at', false
     );
     App.orders = orders;
@@ -235,6 +235,12 @@
       p_discount_bearer: payload.discount_bearer || 'helia',
       p_snapp_multiplier: payload.snapp_multiplier,
       p_snapp_part: payload.snapp_part ?? null,
+      /* v5 mixed: presence of p_cash_part selects the new fee-inside-Snapp
+         math on the server. 0 is a valid cash part (fully via Snapp), so it
+         must never become null for a mixed order. */
+      p_cash_part: payload.method === 'mixed'
+        ? (payload.cash_part == null ? 0 : payload.cash_part)
+        : null,
       p_note: payload.note || null,
       p_status: payload.status || null,
       p_shipping_payment_method: payload.shipping_payment_method || null

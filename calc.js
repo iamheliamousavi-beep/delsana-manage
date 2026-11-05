@@ -10,7 +10,15 @@
    Cash and snapp results are byte-for-byte identical to v2.
    v4 model (follow-up): the mixed Snapp part S is the customer's exact
    Snapp charge; the Snapp fee (snappRound(S)-S, clamped to 0 with a
-   warning for tiny S) is paid in cash. */
+   warning for tiny S) is paid in cash.
+   v5 model (split fee fix): the fee is collected INSIDE the Snapp amount.
+   The customer pays a cash part C (goods only, no fee) and a Snapp part P
+   that already includes the fee on the goods covered by Snapp:
+     remainingGoods = net - C          (cash reduces the Snapp-covered goods)
+     expectedSnap   = round1000(remainingGoods * multiplier)
+     validation:    |P - expectedSnap| <= MIXED_TOLERANCE
+   Old rows (fee inside the recorded cash part) keep the v4 path via the
+   fee_in_snapp flag, so legacy orders never change displayed values. */
 (function (root) {
   'use strict';
 
@@ -84,19 +92,51 @@
   }
 
   var SNAPP_PART_MSG = 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد';
-  /* Parse the raw Snapp-part input (single source of truth for the rule in
+  var CASH_PART_MSG = 'مبلغ نقدی باید عدد صحیح و ۰ یا بیشتر باشد';
+  /* Parse a toman amount (single source of truth for the number rule in
      the new-order form AND the tests): Persian/Arabic digits, thousand
      separators and a trailing-dash minus are accepted; a fractional value
-     (1.5, ۵٫۵) is an error, never silently truncated. Throws SNAPP_PART_MSG. */
-  function parseSnappPart(text) {
-    if (text === null || text === undefined) throw new Error(SNAPP_PART_MSG);
+     (1.5, ۵٫۵) is an error, never silently truncated. Throws msg. */
+  function parseMoney(text, msg) {
+    if (text === null || text === undefined) throw new Error(msg);
     var t = toEnDigits(text).replace(/[\u2212\u2013\u2014]/g, '-').replace(/[\s,٬]/g, '');
     var m = /^(-?)(\d+)(?:[\.\u066B](\d+))?$/.exec(t);
-    if (!m) throw new Error(SNAPP_PART_MSG);
-    if (m[3] && !/^0+$/.test(m[3])) throw new Error(SNAPP_PART_MSG);
+    if (!m) throw new Error(msg);
+    if (m[3] && !/^0+$/.test(m[3])) throw new Error(msg);
     var v = Number((m[1] || '') + m[2]);
-    if (!isFinite(v) || v < 1 || v > MAX_SAFE) throw new Error(SNAPP_PART_MSG);
+    if (!isFinite(v) || v < 0 || v > MAX_SAFE) throw new Error(msg);
     return v;
+  }
+  /* Parse the raw Snapp-part input: a positive integer toman (0 is
+     rejected — a mixed order without a Snapp part is the cash method). */
+  function parseSnappPart(text) {
+    var v = parseMoney(text, SNAPP_PART_MSG);
+    if (v < 1) throw new Error(SNAPP_PART_MSG);
+    return v;
+  }
+  /* Parse the raw cash-part input (v5 mixed): a non-negative integer. */
+  function parseCashPart(text) {
+    return parseMoney(text, CASH_PART_MSG);
+  }
+
+  /* v5 mixed constants. Suggestion amounts are shown rounded to the
+     nearest 1000; the entered Snapp amount (which already contains the
+     fee and is often a rounded number the customer actually paid) may
+     drift from the expected value by at most MIXED_TOLERANCE toman. */
+  var MIXED_ROUND = 1000;
+  var MIXED_TOLERANCE = 5000;
+
+  /* Exact half-up round of amount / multiplier — the goods value inside a
+     Snapp charge that already includes the fee (v5 mixed). Equals
+     round(amount × b / a) for the multiplier rational a/b, BigInt-exact. */
+  function snappInverseRound(amount, multiplier) {
+    var n = Number(amount);
+    if (!isFinite(n) || Math.floor(n) !== n || n < 0 || n > MAX_SAFE) {
+      throw new Error('snappInverseRound: مقدار باید عدد صحیح نامنفی باشد');
+    }
+    var r = parseMultiplierRational(multiplier);
+    var q = (2n * BigInt(n) * r.b + r.a) / (2n * r.a);
+    return Number(q);
   }
 
   /* Split the discount between the two partners.
@@ -120,7 +160,10 @@
        shipping_payment_method: 'cash'|'snapp'  (how the shipping fee is paid;
          omitted -> follows the goods method, mixed -> cash, matching old rows)
        post_fee, snapp_multiplier, rounding_step      (settings/snapshot values)
-       snapp_part: the Snapp side S (mixed only; cash/snapp must send null/0)
+       snapp_part: the Snapp charge P (mixed only; cash/snapp must send null/0)
+       cash_part:  v5 mixed only — the cash part C (non-Snapp goods payment)
+       fee_in_snapp: v5 flag — true for rows created by the v5 model; absent
+         or false = legacy v4 semantics (fee inside cash_charge)
      returns every derived amount as integers. */
   function calcOrder(inp) {
     if (!inp || !Array.isArray(inp.items)) throw new Error('لیست کالاها الزامی است');
@@ -185,7 +228,39 @@
     var snapp_part = 0, snapp_charge = 0, cash_charge = 0;
     var snapp_deposit = 0, snapp_fee = 0, snapp_fee_clamped = false;
     var goods_snapp_charge = 0, goods_cash_charge = 0;
-    if (method === 'mixed') {
+    var cash_part = 0, remaining_goods = 0, expected_snapp = 0;
+    /* fee_in_snapp=true (v5, new rows): the fee lives inside the Snapp
+       amount — the cash part covers goods only.
+       fee_in_snapp=false/absent (legacy, pre-012 rows): v4 semantics. */
+    var feeInSnapp = !!inp.fee_in_snapp;
+    if (method === 'mixed' && feeInSnapp) {
+      var C = parseCashPart(inp.cash_part);
+      var P = parseSnappPart(sRaw);
+      var remaining = net - C;
+      if (remaining <= 0) {
+        throw new Error('مبلغ نقدی نباید از مبلغ کالاها پس از تخفیف بیشتر یا برابر باشد؛ برای پرداخت کامل از روش نقدی استفاده کنید');
+      }
+      var expectedSnap = snappRound(remaining, mult, MIXED_ROUND);
+      if (Math.abs(P - expectedSnap) > MIXED_TOLERANCE) {
+        throw new Error('مبلغ اسنپ‌پی واردشده ' + P + ' تومان با نقدی ' + C + ' تومان هم‌خوانی ندارد؛ مبلغ مورد انتظار اسنپ‌پی ' + expectedSnap + ' تومان است');
+      }
+      snapp_fee = C + P - net;
+      if (snapp_fee < 0) {
+        throw new Error('مبلغ اسنپ‌پی واردشده ' + P + ' تومان از باقی‌مانده کالاها ('
+          + remaining + ' تومان) بعد از نقدی کمتر است؛ نقدی و مبلغ اسنپ‌پی را با هم بررسی کنید');
+      }
+      snapp_part = P;
+      cash_part = C;
+      remaining_goods = remaining;
+      expected_snapp = expectedSnap;
+      goods_snapp_charge = P;
+      goods_cash_charge = C;
+      snapp_charge = P + shipping_snapp;
+      cash_charge = C + shipping_cash;
+      snapp_deposit = remaining + shipping_snapp;
+      customer_total = snapp_charge + cash_charge;
+      snapp_fee_clamped = false;
+    } else if (method === 'mixed') {
       var S = parseSnappPart(sRaw);
       if (S >= net) {
         throw new Error('مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید');
@@ -276,6 +351,10 @@
       owe: owe,
       h_share: h_share,
       snapp_part: snapp_part,
+      cash_part: cash_part,
+      remaining_goods: remaining_goods,
+      expected_snapp: expected_snapp,
+      fee_in_snapp: feeInSnapp,
       snapp_charge: snapp_charge,
       cash_charge: cash_charge,
       snapp_deposit: snapp_deposit,
@@ -371,14 +450,18 @@
   }
 
   var Calc = {
-    VERSION: 5,
+    VERSION: 6,
     BEARERS: BEARERS,
     SHIPPING: SHIPPING,
     METHODS: METHODS,
     SHIPPING_PAYMENTS: SHIPPING_PAYMENTS,
+    MIXED_ROUND: MIXED_ROUND,
+    MIXED_TOLERANCE: MIXED_TOLERANCE,
     roundToStep: roundToStep,
     snappRound: snappRound,
+    snappInverseRound: snappInverseRound,
     parseSnappPart: parseSnappPart,
+    parseCashPart: parseCashPart,
     splitDiscount: splitDiscount,
     calcOrder: calcOrder,
     shippingPaymentMethod: shippingPaymentMethod,

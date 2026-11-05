@@ -177,6 +177,25 @@ Deno.test('12.5 invoice DM builder', () => {
   includes(mixed, '💰 مبلغ کل مشتری: ۸۹۰٬۰۰۰ تومان', 'the mixed customer total');
   includes(mixed, 'واریزی اسنپ‌پی: ۲۷۵٬۰۰۰ تومان', 'the mixed settlement line');
 
+  /* v5 rows (migration 012): the fee was collected inside the Snapp amount */
+  const mixedV5 = buildInvoice({
+    ...order,
+    method: 'mixed',
+    fee_in_snapp: true,
+    shipping_fee: 0,
+    snapp_part: 6100000,
+    snapp_charge: 6100000,
+    snapp_fee: 700000,
+    snapp_deposit: 5400000,
+    cash_charge: 100000,
+    total: 6200000,
+  });
+  includes(mixedV5, 'اسنپ‌پی کالا (مشتری، شامل کارمزد اسنپ‌پی ۷۰۰٬۰۰۰): ۶٬۱۰۰٬۰۰۰ تومان', 'the v5 Snapp line with the fee inside');
+  includes(mixedV5, 'نقدی / کارت کالا (مشتری): ۱۰۰٬۰۰۰ تومان', 'the v5 cash line without the fee');
+  includes(mixedV5, '💰 مبلغ کل مشتری: ۶٬۲۰۰٬۰۰۰ تومان', 'the v5 customer total');
+  includes(mixedV5, 'واریزی اسنپ‌پی: ۵٬۴۰۰٬۰۰۰ تومان', 'the v5 settlement line');
+  excludes(mixedV5, 'نقدی / کارت کالا (مشتری، شامل کارمزد', 'no legacy fee-in-cash label on a v5 row');
+
   const cashText = buildInvoice(order);
   excludes(cashText, 'اسنپ‌پی کالا', 'no Snapp goods line on a cash invoice');
   excludes(cashText, 'دریافتی اسنپ‌پی', 'no Snapp receipts on a cash invoice');

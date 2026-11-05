@@ -208,11 +208,12 @@ create table if not exists public.orders (
   owe              bigint not null default 0,   -- what the page transfers to the shop
   h_share          bigint not null default 0,   -- what the page keeps
   payout           bigint not null default 0,   -- what Snapp Pay will deposit
-  snapp_part       bigint not null default 0,   -- mixed only: the Snapp side S (customer Snapp charge)
-  snapp_charge     bigint not null default 0,   -- mixed: = S; snapp: total; cash: 0
-  cash_charge      bigint not null default 0,   -- mixed/cash: customer cash (incl. Snapp fee); snapp: 0
-  snapp_fee        bigint not null default 0,   -- mixed only: snappRound(S)-S (0 when clamped)
-  snapp_deposit    bigint not null default 0,   -- mixed: S-fee; snapp: payout; cash: 0
+  snapp_part       bigint not null default 0,   -- mixed: the Snapp charge P (v5) / S (legacy v4)
+  snapp_charge     bigint not null default 0,   -- mixed: = P + shipSnap; snapp: total; cash: 0
+  cash_charge      bigint not null default 0,   -- mixed: cash part + shipCash; snapp: 0; cash: total
+  fee_in_snapp     boolean not null default false, -- true = fee collected inside the Snapp amount (v5)
+  snapp_fee        bigint not null default 0,   -- mixed only: v5 = P - goods covered; legacy = snappRound(S)-S
+  snapp_deposit    bigint not null default 0,   -- mixed: goods covered by Snapp + shipSnap; snapp: payout; cash: 0
   status           text not null default 'new'
                      check (status in ('new', 'awaiting_snapp', 'paid',
                                        'settled', 'shipped', 'delivered',
@@ -436,7 +437,9 @@ $$;
 create or replace function public.order_amounts(
   p_sub bigint, p_base_sum bigint, p_hp_sum bigint,
   p_discount bigint, p_bearer text, p_ship_fee bigint,
-  p_method text, p_snapp_part bigint, p_mult numeric, p_step bigint,
+  p_method text, p_snapp_part bigint,
+  p_cash_part bigint default null,
+  p_mult numeric default null, p_step bigint default null,
   p_shipping_payment_method text default 'cash',
   out o_net bigint, out o_mahdi_disc bigint, out o_helia_disc bigint,
   out o_total bigint, out o_payout bigint, out o_owe bigint,
@@ -457,6 +460,8 @@ declare
   v_rounded bigint;
   v_fee    bigint;
   v_clamped boolean := false;
+  v_remaining bigint;
+  v_expected bigint;
   v_ship_pay text;
   v_ship_snap bigint;
 begin
@@ -507,36 +512,73 @@ begin
   o_snapp_fee_clamped := false;
 
   if p_method = 'mixed' then
-    if p_snapp_part is null or p_snapp_part < 1 then
-      raise exception 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد';
-    end if;
-    if p_snapp_part >= v_net then
-      raise exception 'مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید';
-    end if;
-    if p_mult is null or p_mult <= 0 or p_mult > 10 then
-      raise exception 'ضریب اسنپ‌پی نامعتبر است';
-    end if;
-    if p_step is null or p_step <= 0 then
-      raise exception 'تنظیمات نامعتبر است';
-    end if;
-    v_rounded := public.round_to_step(p_snapp_part * p_mult, p_step);
-    if v_rounded < p_snapp_part then
-      v_fee := 0;
-      v_clamped := true;
+    if p_cash_part is not null then
+      -- v5 (migration 012): the fee is collected INSIDE the Snapp amount;
+      -- the cash part covers goods only. p_cash_part selects the model.
+      if p_cash_part < 0 then
+        raise exception 'مبلغ نقدی باید عدد صحیح و ۰ یا بیشتر باشد';
+      end if;
+      if p_snapp_part is null or p_snapp_part < 1 then
+        raise exception 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد';
+      end if;
+      if p_mult is null or p_mult <= 0 or p_mult > 10 then
+        raise exception 'ضریب اسنپ‌پی نامعتبر است';
+      end if;
+      v_remaining := v_net - p_cash_part;
+      if v_remaining <= 0 then
+        raise exception 'مبلغ نقدی نباید از مبلغ کالاها پس از تخفیف بیشتر یا برابر باشد؛ برای پرداخت کامل از روش نقدی استفاده کنید';
+      end if;
+      -- suggestion grain is 1000 toman, independent of rounding_step
+      v_expected := public.round_to_step(v_remaining::numeric * p_mult, 1000);
+      if abs(p_snapp_part - v_expected) > 5000 then
+        raise exception 'مبلغ اسنپ‌پی واردشده % تومان با نقدی % تومان هم‌خوانی ندارد؛ مبلغ مورد انتظار اسنپ‌پی % تومان است',
+          p_snapp_part, p_cash_part, v_expected;
+      end if;
+      v_fee := p_cash_part + p_snapp_part - v_net;
+      if v_fee < 0 then
+        raise exception 'مبلغ اسنپ‌پی واردشده % تومان از باقی‌مانده کالاها (% تومان) بعد از نقدی کمتر است؛ نقدی و مبلغ اسنپ‌پی را با هم بررسی کنید',
+          p_snapp_part, v_remaining;
+      end if;
+      o_snapp_part := p_snapp_part;
+      o_snapp_fee := v_fee;
+      o_snapp_fee_clamped := false;
+      o_snapp_charge := p_snapp_part + v_ship_snap;
+      o_cash_charge := p_cash_part + (p_ship_fee - v_ship_snap);
+      o_snapp_deposit := v_remaining + v_ship_snap;
+      v_total := o_snapp_charge + o_cash_charge;
     else
-      v_fee := v_rounded - p_snapp_part;
-      v_clamped := false;
+      -- legacy v4 rows: the fee (snappRound(S)-S) is paid in cash
+      if p_snapp_part is null or p_snapp_part < 1 then
+        raise exception 'مبلغ اسنپ‌پی باید عدد صحیح و حداقل ۱ باشد';
+      end if;
+      if p_snapp_part >= v_net then
+        raise exception 'مبلغ اسنپ‌پی باید کمتر از مبلغ کالاها پس از تخفیف باشد؛ برای پرداخت کامل از روش اسنپ‌پی یا نقدی استفاده کنید';
+      end if;
+      if p_mult is null or p_mult <= 0 or p_mult > 10 then
+        raise exception 'ضریب اسنپ‌پی نامعتبر است';
+      end if;
+      if p_step is null or p_step <= 0 then
+        raise exception 'تنظیمات نامعتبر است';
+      end if;
+      v_rounded := public.round_to_step(p_snapp_part * p_mult, p_step);
+      if v_rounded < p_snapp_part then
+        v_fee := 0;
+        v_clamped := true;
+      else
+        v_fee := v_rounded - p_snapp_part;
+        v_clamped := false;
+      end if;
+      if not (v_fee < p_snapp_part) then
+        raise exception 'کارمزد اسنپ‌پی از مبلغ اسنپ‌پی بیشتر می‌شود؛ ضریب را بررسی کنید';
+      end if;
+      o_snapp_part := p_snapp_part;
+      o_snapp_fee := v_fee;
+      o_snapp_fee_clamped := v_clamped;
+      o_snapp_charge := p_snapp_part + v_ship_snap;
+      o_snapp_deposit := (p_snapp_part - v_fee) + v_ship_snap;
+      o_cash_charge := (v_net - p_snapp_part) + v_fee + (p_ship_fee - v_ship_snap);
+      v_total := o_snapp_charge + o_cash_charge;
     end if;
-    if not (v_fee < p_snapp_part) then
-      raise exception 'کارمزد اسنپ‌پی از مبلغ اسنپ‌پی بیشتر می‌شود؛ ضریب را بررسی کنید';
-    end if;
-    o_snapp_part := p_snapp_part;
-    o_snapp_fee := v_fee;
-    o_snapp_fee_clamped := v_clamped;
-    o_snapp_charge := p_snapp_part + v_ship_snap;
-    o_snapp_deposit := (p_snapp_part - v_fee) + v_ship_snap;
-    o_cash_charge := (v_net - p_snapp_part) + v_fee + (p_ship_fee - v_ship_snap);
-    v_total := o_snapp_charge + o_cash_charge;
   elsif p_method = 'snapp' then
     if p_snapp_part is not null and p_snapp_part <> 0 then
       raise exception 'مبلغ اسنپ‌پی فقط برای پرداخت ترکیبی است';
@@ -597,7 +639,8 @@ create or replace function public.create_order(
   p_note             text     default null,
   p_status           text     default null,
   p_snapp_part       bigint   default null,
-  p_shipping_payment_method text default null
+  p_shipping_payment_method text default null,
+  p_cash_part        bigint   default null
 ) returns uuid
 language plpgsql
 security definer
@@ -648,6 +691,9 @@ begin
   end if;
   if p_method not in ('cash', 'snapp', 'mixed') then
     raise exception 'روش پرداخت نامعتبر است';
+  end if;
+  if p_method = 'mixed' and p_cash_part is not null and p_cash_part < 0 then
+    raise exception 'مبلغ نقدی باید عدد صحیح و ۰ یا بیشتر باشد';
   end if;
   -- old clients send null: shipping follows the goods method (mixed -> cash)
   v_ship_pay := coalesce(nullif(trim(p_shipping_payment_method), ''),
@@ -713,6 +759,7 @@ begin
     if v_step <= 0 then raise exception 'تنظیمات نامعتبر است'; end if;
   end if;
 
+  -- status logic (kept before the item loop)
   if p_method = 'snapp' or p_method = 'mixed' then
     if p_snapp_multiplier is not null then
       if p_snapp_multiplier <= 0 or p_snapp_multiplier > 10 then
@@ -809,7 +856,7 @@ begin
          v_snapp_deposit, v_snapp_fee
     from public.order_amounts(
            v_sub, v_base_sum, v_hp_sum, v_discount, p_discount_bearer,
-           v_ship_fee, p_method, p_snapp_part, v_mult, v_step, v_ship_pay) as a;
+           v_ship_fee, p_method, p_snapp_part, p_cash_part, v_mult, v_step, v_ship_pay) as a;
 
   if v_h_share < 0 then
     raise notice 'هشدار: سود پیج منفی می‌شود؛ تخفیف را کم کنید';
@@ -824,13 +871,16 @@ begin
     shipping_payment_method, shipping_fee, snapp_multiplier, rounding_step,
     discount, discount_bearer, mahdi_discount, helia_discount, total, owe,
     h_share, payout, status, status_history, note, last_actor,
-    snapp_part, snapp_charge, cash_charge, snapp_fee, snapp_deposit
+    snapp_part, snapp_charge, cash_charge, snapp_fee, snapp_deposit, fee_in_snapp
   ) values (
     trim(p_customer), trim(public.normalize_digits(p_phone)), trim(p_address), v_postal,
     v_out_items, p_method, p_shipping_method, v_ship_pay, v_ship_fee, v_mult, v_step,
     v_discount, p_discount_bearer, v_mahdi_disc, v_helia_disc,
     v_total, v_owe, v_h_share, v_payout, v_status, v_hist, coalesce(p_note, ''),
-    v_uid, v_snapp_part, v_snapp_charge, v_cash_charge, v_snapp_fee, v_snapp_deposit
+    v_uid, v_snapp_part, v_snapp_charge, v_cash_charge, v_snapp_fee, v_snapp_deposit,
+    /* a mixed row with a cash part is a v5 (fee-inside-Snapp) row; null cash
+       means a stale legacy client, which keeps the legacy model */
+    p_method = 'mixed' and p_cash_part is not null
   ) returning id into v_order_id;
 
   return v_order_id;
@@ -1806,6 +1856,8 @@ declare
   v_post_fee bigint; v_mult numeric; v_step bigint;
   v_set text;
   v_ship_fee bigint;
+  v_cash_part bigint;
+  v_is_v5 boolean;
   v_sub bigint := 0; v_base_sum bigint := 0; v_hp_sum bigint := 0;
   v_out_items jsonb := '[]'::jsonb;
   v_mahdi_disc bigint; v_helia_disc bigint; v_total bigint; v_payout bigint;
@@ -1816,7 +1868,7 @@ declare
   v_changed text[] := '{}';
   v_key text;
   v_allowed text[] := array['customer','phone','address','postal_code','note',
-    'shipping_method','shipping_payment_method','method','snapp_part','discount','discount_bearer',
+    'shipping_method','shipping_payment_method','method','snapp_part','cash_part','discount','discount_bearer',
     'tracking','status','shipping_fee','snapp_multiplier','rounding_step','items'];
   e jsonb; v_name text; v_qty bigint; v_base bigint; v_hp bigint; v_pid text;
   it jsonb;
@@ -1854,6 +1906,22 @@ begin
   v_snapp_part := case when p_data ? 'snapp_part'
                        then (case when p_data->>'snapp_part' is null then null else (p_data->>'snapp_part')::bigint end)
                        else o.snapp_part end;
+  -- the cash part only exists on v5 mixed rows (fee inside the Snapp amount);
+  -- legacy rows keep the legacy math forever (no backfill needed)
+  v_is_v5 := coalesce(o.fee_in_snapp, false) and v_method = 'mixed';
+  if v_is_v5 then
+    if p_data ? 'cash_part' and p_data->>'cash_part' is not null then
+      v_cash_part := (p_data->>'cash_part')::bigint;
+    else
+      -- safety net: build it from the stored channels (goods cash part)
+      v_cash_part := o.cash_charge
+        - (o.shipping_fee - case when coalesce(o.shipping_payment_method, 'cash') = 'snapp'
+                                  then o.shipping_fee else 0 end);
+    end if;
+  else
+    v_cash_part := null;
+  end if;
+  if v_is_v5 and v_cash_part is null then v_cash_part := 0; end if;
   v_discount := case when p_data ? 'discount' then (p_data->>'discount')::bigint else o.discount end;
   v_bearer   := case when p_data ? 'discount_bearer' then coalesce(p_data->>'discount_bearer', 'helia') else o.discount_bearer end;
   v_tracking := case when p_data ? 'tracking'
@@ -1987,7 +2055,7 @@ begin
          v_h_share, v_sp, v_sc, v_cc, v_dep, v_fee
     from public.order_amounts(
            v_sub, v_base_sum, v_hp_sum, v_discount, v_bearer,
-           v_ship_fee, v_method, v_snapp_part, v_mult, v_step, v_ship_pay) as a;
+           v_ship_fee, v_method, v_snapp_part, v_cash_part, v_mult, v_step, v_ship_pay) as a;
 
   -- status_history: admin override bypasses the flow but is logged
   v_hist := o.status_history;
@@ -2008,6 +2076,8 @@ begin
     total = v_total, owe = v_owe, h_share = v_h_share, payout = v_payout,
     snapp_part = v_sp, snapp_fee = v_fee, snapp_charge = v_sc,
     cash_charge = v_cc, snapp_deposit = v_dep,
+    /* a v5 mixed row that stops being mixed becomes a plain v5=false row */
+    fee_in_snapp = v_is_v5,
     status = v_status, status_history = v_hist, tracking = v_tracking,
     last_actor = auth.uid()
    where id = p_order_id;

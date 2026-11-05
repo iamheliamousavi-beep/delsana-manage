@@ -29,6 +29,7 @@ export type Order = {
   cash_charge: number | null;
   snapp_fee: number | null;
   snapp_deposit: number | null;
+  fee_in_snapp?: boolean | null; // absent = legacy row (pre-012)
 };
 
 export type OutboxRow = {
@@ -290,6 +291,8 @@ const ADMIN_FIELD_FA: Record<string, string> = {
   shipping_fee: 'هزینه ارسال',
   snapp_multiplier: 'ضریب اسنپ‌پی',
   rounding_step: 'گرد کردن',
+  cash_part: 'مبلغ نقدی مشتری',
+  fee_in_snapp: 'کارمزد داخل اسنپ‌پی',
   items: 'کالاها',
   total: 'مبلغ کل',
   payout: 'پرداختی',
@@ -358,8 +361,15 @@ export function buildInvoice(order: Order): string {
   lines.push(`💳 پرداخت کالا — ${methodLabel(order.method)}: ${money(goodsCharge)} تومان`);
   lines.push(`🚚 پرداخت ارسال — ${shippingPaymentLabel(shipPay)}: ${money(shipFee)} تومان`);
   if (order.method === 'mixed') {
-    lines.push(`اسنپ‌پی کالا (مشتری): ${money(goodsSnap)} تومان`);
-    lines.push(`نقدی / کارت کالا (مشتری، شامل کارمزد اسنپ‌پی ${money(order.snapp_fee ?? 0)}): ${money(goodsCash)} تومان`);
+    if (order.fee_in_snapp) {
+      /* v5 (migration 012): the fee was collected inside the Snapp amount */
+      lines.push(`اسنپ‌پی کالا (مشتری، شامل کارمزد اسنپ‌پی ${money(order.snapp_fee ?? 0)}): ${money(goodsSnap)} تومان`);
+      lines.push(`نقدی / کارت کالا (مشتری): ${money(goodsCash)} تومان`);
+    } else {
+      /* legacy rows (pre-012): the fee was collected in the cash part */
+      lines.push(`اسنپ‌پی کالا (مشتری): ${money(goodsSnap)} تومان`);
+      lines.push(`نقدی / کارت کالا (مشتری، شامل کارمزد اسنپ‌پی ${money(order.snapp_fee ?? 0)}): ${money(goodsCash)} تومان`);
+    }
   }
   lines.push(`💰 مبلغ کل مشتری: ${money(total)} تومان`);
   if (snap > 0) lines.push(`دریافتی اسنپ‌پی: ${money(snap)} تومان`);
