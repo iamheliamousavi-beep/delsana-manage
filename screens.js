@@ -606,6 +606,12 @@ var Screens = (function () {
 
     left.appendChild(el('div', { class: 'card' },
       el('div', { class: 'card-title' }, el('h3', { text: 'اطلاعات مشتری' })),
+      // Paste customer info area
+      el('div', { class: 'field', style: 'margin-bottom:8px' },
+        el('textarea', { id: 'paste-customer-info', placeholder: 'متن اطلاعات مشتری را اینجا بچسبانید', rows: 2, style: 'width:100%; margin-bottom:4px;' }),
+        el('button', { id: 'paste-btn', type: 'button', text: 'استخراج خودکار', style: 'float:right;' }),
+        el('button', { id: 'clear-paste-btn', type: 'button', text: 'پاک کردن', style: 'float:right; margin-right:8px; display:none;' })
+      ),
       el('div', { class: 'field' },
         el('label', { for: 'no-customer', text: 'نام مشتری' }),
         el('input', { type: 'text', id: 'no-customer', autocomplete: 'off', placeholder: 'نام و خانوادگی' })),
