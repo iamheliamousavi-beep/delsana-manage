@@ -609,7 +609,7 @@ var Screens = (function () {
       // Paste customer info area
       el('div', { class: 'field', style: 'margin-bottom:8px' },
         el('textarea', { id: 'paste-customer-info', placeholder: 'متن اطلاعات مشتری را اینجا بچسبانید', rows: 2, style: 'width:100%; margin-bottom:4px;' }),
-        el('button', { id: 'paste-btn', type: 'button', text: 'استخراج خودکار', style: 'float:right;' }),
+        el('button', { id: 'paste-btn', type: 'button', text: 'استخراج خودکار', style: 'float:right;', onclick: function () { var t = prompt('اطلاعات مشتری را paste کنید:'); if (t && t.trim()) { var r = window.parseCustomerText(t); if (r.name) $('#no-customer').value = r.name; if (r.phone) $('#no-phone').value = r.phone; if (r.postalCode) $('#no-postal').value = r.postalCode; if (r.address) $('#no-address').value = r.address; var w = r.warnings || []; if (w.length > 0) { var h = $('#no-postal-hint'); if (h) h.innerHTML = w.map(function (x) { return '<div style="color:#d64a4a; font-size:12px; margin:2px 0;">' + x + '</div>'; }).join(''); } } } }),
         el('button', { id: 'clear-paste-btn', type: 'button', text: 'پاک کردن', style: 'float:right; margin-right:8px; display:none;' })
       ),
       el('div', { class: 'field' },
