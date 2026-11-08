@@ -1108,7 +1108,7 @@ var Screens = (function () {
   }
 
   /* ---------- parse pasted customer text ---------- */
-  function parsePasteCustomer() {
+  async function parsePasteCustomer() {
     var textarea = $('#paste-customer-info');
     if (!textarea) return;
     var text = textarea.value.trim();
