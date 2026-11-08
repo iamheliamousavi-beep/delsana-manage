@@ -1,226 +1,327 @@
-/* parse-customer.js — offline, rule-based parser for Iranian customer info
+﻿/* parse-customer.js — offline, rule-based parser for Iranian customer info
    extracted from free-text messenger paste. No external AI/API, no new deps.
    Exposes: parseCustomerText(text) -> { name, phone, postalCode, address, province?, warnings }
-   Primary method: unlabeled line parsing. Works for line-by-line,
-   Persian digits, spaces in postal, missing fields.
+   Works identically on multi-line text OR single-line collapsed text
+     (what prompt()/clipboard produce).
 */
 
 (function (root) {
   'use strict';
 
-  /* ---------- 31 Iranian province names (lowercased) ---------- */
+  /* ---------- 31 Iranian province names (lowercased, with aliases) ---------- */
   var PROVINCES = {
-    'آذربایجان شرقی': 1, 'آذربایجان غربی': 1, 'اردبیل': 1, 'Bushehr': 1, 'بوشهر': 1, 'چهارم': 1,
-    'خوزستان': 1, ' Zanjan': 1, 'یزد': 1, 'گرگان': 1, 'گیلان': 1,
-    ' Kelardasht': 1, 'ک provin': 1, 'کهگیلویه و بویراحمد': 1, 'کرمان': 1, 'کرمانشاه': 1,
-    'کهگیلویه': 1, 'کردستان': 1, 'کرمانشاه': 1, 'مازندران': 1, 'اردبیل': 1,
-    'همدان': 1, 'هرمزگان': 1, 'ایلام': 1, 'قزوین': 1, 'کاشان': 1,
-    'کوهگلی': 1, 'لرستان': 1, 'مهر': 1, 'هرمزگان': 1, 'یزد': 1
+    'آذربایجان شرقی': 1, 'آذربایجان غربی': 1, 'اردبیل': 1, 'اصفهان': 1, 'البرز': 1,
+    'ایلام': 1, 'بوشهر': 1, 'تهران': 1, 'چهارمحال و بختیاری': 1, 'خرم': 1,
+    'خرسانه': 1, 'خراسان جنوبی': 1, 'خراسان رضوی': 1, 'خراسان شمالی': 1,
+    'خوزستان': 1, 'زنجان': 1, 'سمنان': 1, 'سیستان و بلوچستان': 1,
+    'فارس': 1, 'قزوین': 1, 'قم': 1, 'کردستان': 1, 'کرمان': 1, 'کرمانشاه': 1,
+    'کهگیلویه و بویراحمد': 1, 'گیلانی': 1, 'لرستان': 1, 'مازندران': 1, 'هرمزگان': 1,
+    'همدان': 1, 'یزد': 1
   };
 
-  /* ---------- basic text normalization (per-string, keeps relevant chars) ---------- */
+  /* ---------- address-start keywords (for splitting name from address) ---------- */
+  var ADDRESS_KEYWORDS = /^(استان|شهر| شهرستان| خیابان| خ| بلوار| كوچه| میدان| روستا| بخش| محله| شهرک| کوی| پلاک| واحد| طبقه| بن بست)/i;
+
+  /* ---------- basic normalization ---------- */
 
   function toEnDigits(s) {
     if (s === null || s === undefined) return '';
     return String(s)
       .replace(/[۰-۹]/g, function (d) { return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)); })
-      .replace(/[٠-٩]/g, function (d) { return String('٠١٢٣٤٥٦۷۸۹'.indexOf(d)); });
+      .replace(/[٠-٩]/g, function (d) { return String('٠١٢٣۴۵۶۷۸۹'.indexOf(d)); });
   }
 
-  /* Keep only: 0-9, a-z, A-Z, Persian/Arabic chars, and whitespace.
-     Replace everything else with a space, then collapse whitespace. */
-  function normalizeStr(s) {
+  /* ---------- strip bidi/zero-width marks, keep ZWNJ inside words ---------- */
+  function normalizeAll(s) {
     if (s === null || s === undefined) return '';
     var t = String(s);
     t = toEnDigits(t);
     t = t.replace(/[يک]/g, function (d) { return d === 'ي' ? 'ی' : 'ک'; });
-    t = t.replace(/[^0-9a-zA-Z\s\u0600-\u06FF\u0670\u0750-\u077F\u08A0-\u08FF]/g, ' ');
-    t = t.replace(/\s+/g, ' ').trim();
-    return t;
+    t = t.replace(/[\u200B\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, '');
+    t = t.replace(/[•●▪️◆★✅➖|¦]/g, ' ');
+    t = t.replace(/[^0-9a-zA-Z\s\u0600-\u06FF\u0670\u0750-\u077F\u08A0-\u08FF\n\r]/g, ' ');
+    t = t.replace(/\r\n|\r|\n/g, '\n');
+    t = t.replace(/[ \t]+/g, ' ');
+    t = t.replace(/\n+/g, '\n');
+    return t.trim();
   }
 
-  /* ---------- province detection ---------- */
+  /* ---------- find Iranian mobile number ---------- */
+  function extractPhoneAndRemainder(text) {
+    var patterns = [
+      /09\d{9}/g,
+      /\+98\s*9\d{3}\s*\d{4}/g,
+      /00989\d{9}/g,
+      /9\d{2}\s*\d{3}\s*\d{4}/g
+    ];
 
-  function isProvince(word) {
-    return word && PROVINCES[word] === 1;
-  }
-
-  /* ---------- find Iranian mobile number in a normalized line ---------- */
-
-  function findPhoneInLine(line) {
-    var en = normalizeStr(line);
-    var digits = en.replace(/\s+/g, '');
-
-    // 09xxxxxxxxx (11 digits starting with 09)
-    if (/^09\d{9}$/.test(digits)) return digits;
-    // 9xxxxxxxxx (10 digits starting with 9, prepend 09)
-    if (/^9\d{9}$/.test(digits)) return '09' + digits.substring(1, 10);
-    // 12 digits starting with 989 (+989 or 00989 format)
-    if (digits.length === 12 && digits.startsWith('989')) {
-      return '09' + digits.substring(2, 11); // 09 + 9 digits = 11
-    }
-    // 10 digits starting with 9 (prepend 0) - but only if not starting with 98 (country code)
-    if (digits.length === 10 && /^9\d{9}$/.test(digits) && !digits.startsWith('98')) {
-      return '0' + digits; // '0' + '9xxxxxxxxx' = '09xxxxxxxxx'
-    }
-
-    // Also check if the full normalized line contains 09+9digits somewhere
-    var m = en.match(/09\d{9}/);
-    if (m) return m[0];
-
-    return null;
-  }
-
-  /* ---------- find 10-digit postal code in a normalized line ---------- */
-
-  function findPostalInLine(line) {
-    var en = normalizeStr(line);
-    // Keep only digits and spaces, extract digit groups
-    var groups = en.replace(/\D/g, '').split(/\s+/);
-    for (var i = 0; i < groups.length; i++) {
-      var d = groups[i];
-      if (d.length === 10) return d; // exact 10-digit postal code
-      if (d.length === 10 && d.startsWith('0')) return d; // accept with leading 0
-    }
-    // Also check for 10-digit group: (\d{10}) bounded by non-digits or start/end
-    var m = en.match(/(?:^|\D)(\d{10})(?:\D|$)/);
-    if (m) return m[1];
-    return null;
-  }
-
-  /* ---------- main parser ---------- */
-
-  /**
-   * Parse free-text customer info from messenger.
-   * Primary method: unlabeled line parsing.
-   * @param {string} text - The raw text sent by customer via messenger
-   * @returns {{ name: string, phone: string, postalCode: string, address: string, province?: string, warnings: string[] }} }
-   */
-  function parseCustomerText(text) {
-    var warnings = [];
-    var result = {
-      name: '',
-      phone: '',
-      postalCode: '',
-      address: '',
-      province: undefined,
-      warnings: []
-    };
-
-    if (!text || String(text).trim() === '') {
-      warnings.push('کد پستی پیدا نشد');
-      result.warnings = warnings;
-      return result;
-    }
-
-    // Split into lines, drop empty lines
-    var rawLines = String(text).split('\n').map(function (l) { return l.trim(); }).filter(function (l) { return l !== ''; });
-
-    if (rawLines.length === 0) {
-      warnings.push('کد پستی پیدا نشد');
-      result.warnings = warnings;
-      return result;
-    }
-
-    // --- Name: first line that contains no ASCII digits and doesn't start with a province word ---
-    var nameLineIndex = -1;
-    for (var i = 0; i < rawLines.length; i++) {
-      var line = rawLines[i];
-      // Skip lines that have ASCII digits (0-9) - these are likely phone/postal
-      if (/[0-9]/.test(line)) continue;
-      // Check if line starts with a province name
-      var normalizedFirst = normalizeStr(line).split(' ')[0];
-      if (isProvince(normalizedFirst)) continue;
-      nameLineIndex = i;
-      break;
-    }
-
-    if (nameLineIndex >= 0) {
-      result.name = rawLines[nameLineIndex];
-    }
-
-    // Clean name of any residual label words (just in case)
-    if (result.name) {
-      result.name = result.name.replace(/^(nam|name|gerefte)\s*:?\s*/i, '').trim();
-    }
-
-    // --- Phone: find Iranian mobile number in lines ---
-    var foundPhones = [];
-    for (var i = 0; i < rawLines.length; i++) {
-      var line = rawLines[i];
-      // Only search for phone in lines without ASCII digits (name line already excluded)
-      // But check all lines except the name line
-      var isNameLine = (i === nameLineIndex);
-      if (!isNameLine && /[0-9۰-۹]/.test(line)) {
-        var phone = findPhoneInLine(line);
-        if (phone) foundPhones.push({ lineIndex: i, phone: phone });
+    for (var p = 0; p < patterns.length; p++) {
+      var matches = [];
+      var m;
+      while ((m = patterns[p].exec(text)) !== null) {
+        matches.push(m[0]);
+        break; // first match only
+      }
+      if (matches.length > 0) {
+        var phone = matches[0].replace(/[\s\-]/g, '');
+        // Normalize to 09xxxxxxxxx
+        if (phone.startsWith('+989')) phone = '09' + phone.substring(3, 12);
+        if (phone.startsWith('00989')) phone = '09' + phone.substring(4, 13);
+        if (phone.startsWith('989')) phone = '09' + phone.substring(2, 11);
+        if (phone.length === 10 && /^9\d{9}$/.test(phone)) phone = '0' + phone;
+        if (/^09\d{9}$/.test(phone)) {
+          // Remove phone span from text
+          var escaped = matches[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          var textWithout = text.replace(new RegExp(escaped, 'g'), ' ');
+          textWithout = textWithout.replace(/[ \t]+/g, ' ').trim();
+          return [phone, textWithout];
+        }
       }
     }
 
-    if (foundPhones.length > 0) {
-      result.phone = foundPhones[0].phone;
-    }
+    return [null, text];
+  }
 
-    // --- Postal code: find 10-digit groups in lines ---
-    var foundPostals = [];
-    for (var i = 0; i < rawLines.length; i++) {
-      var line = rawLines[i];
-      var postal = findPostalInLine(line);
-      if (postal) foundPostals.push({ lineIndex: i, postal: postal });
-    }
-
-    if (foundPostals.length > 0) {
-      result.postalCode = foundPostals[0].postal;
-    }
-
-    // --- Address: all lines after removing name, phone, and postal lines ---
-    var excludedLines = new Set();
-    if (nameLineIndex >= 0) excludedLines.add(nameLineIndex);
-    for (var j = 0; j < foundPhones.length; j++) excludedLines.add(foundPhones[j].lineIndex);
-    for (var j = 0; j < foundPostals.length; j++) excludedLines.add(foundPostals[j].lineIndex);
-
-    var addressLines = [];
-    for (var i = 0; i < rawLines.length; i++) {
-      if (!excludedLines.has(i)) {
-        addressLines.push(rawLines[i]);
-      }
-    }
-    // Normalize each line and join with space
-    result.address = addressLines.map(function (l) { return normalizeStr(l); }).join(' ');
-
-    // --- Province detection ---
-    // If address starts with a known province name, set province field
-    // Per spec: KEEP the full original address text intact
-    if (result.address) {
-      var firstWord = result.address.split(' ')[0].replace(/[،,]/g, '').trim();
-      if (isProvince(firstWord)) {
-        result.province = firstWord;
+  /* ---------- find 10-digit postal code ---------- */
+  function extractPostalAndRemainder(text) {
+    // Pattern 1: 10-digit after postal label (كوديستي, كودپستی, پستی, Postal)
+    var labelPatterns = [
+      /ك[ddu]?ost[iy]?[:\s\-]?(\d{10})/i,
+      /[كك]?[pd]?osti[:\s\-]?(\d{10})/i,
+      /پست[:\s\-]?(\d{10})/i,
+      /Postal[:\s\-]?(\d{10})/i
+    ];
+    for (var li = 0; li < labelPatterns.length; li++) {
+      var m = text.match(labelPatterns[li]);
+      if (m && m[1] && m[1].length === 10 && !m[1].startsWith('0')) {
+        var textWithout = text.replace(new RegExp(escapeRegExp(m[0]), 'g'), ' ');
+        textWithout = textWithout.replace(/[ \t]+/g, ' ').trim();
+        return [m[1], textWithout];
       }
     }
 
-    // --- Warnings ---
-    if (result.phone && !/^09\d{9}$/.test(result.phone)) {
-      warnings.push('شماره تماس ۱۱ رقمی نیست');
-    }
-    if (result.postalCode && !/^\d{10}$/.test(result.postalCode)) {
-      warnings.push('کد پستی ۱۰ رقمی نیست');
-    }
-    if (result.postalCode && result.postalCode.startsWith('0')) {
-      warnings.push('کد پستی شروع به صفر نمی‌شود');
-    }
-    if (!result.postalCode) {
-      warnings.push('کد پستی پیدا نشد');
-    }
-    if (!result.name) {
-      warnings.push('نام پیدا نشد');
+    // Pattern 2: standalone 10-digit run (groups 3-3-4 or 5-5)
+    // e.g. 756 177 7797, 4812345678, 48123 45678, 48123-45678
+    var postalRegex = /(\d{3}[-\s]?\d{3}[-\s]?\d{4}|\d{10})/g;
+    var candidates = [];
+    var m;
+    while ((m = postalRegex.exec(text)) !== null) {
+      var norm = m[0].replace(/[\s\-]/g, '');
+      if (norm.length === 10 && !norm.startsWith('0')) {
+        candidates.push({ value: m[0], index: m.index });
+      }
     }
 
-    result.warnings = warnings;
+    if (candidates.length > 0) {
+      candidates.sort(function (a, b) { return a.index - b.index; });
+      var chosen = candidates[candidates.length - 1];
+      var textWithout = text.replace(new RegExp(escapeRegExp(chosen.value), 'g'), ' ');
+      textWithout = textWithout.replace(/[ \t]+/g, ' ').trim();
+      var postalNorm = chosen.value.replace(/[\s\-]/g, '');
+      return [postalNorm, textWithout];
+    }
+
+    return [null, text];
+  }
+
+  /* ---------- escape regex special chars ---------- */
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /* ---------- extract labeled fields ---------- */
+  function extractLabeledFields(text) {
+    var result = { name: null, phone: null, address: null, postal: null };
+
+    function extractAfterLabel(text, labelWords) {
+      for (var i = 0; i < labelWords.length; i++) {
+        // Try the word as-is, and also as flexible pattern
+        var patterns = [];
+        if (Array.isArray(labelWords[i])) {
+          patterns = labelWords[i];
+        } else {
+          patterns = [labelWords[i]];
+          // Generate flexible patterns for Arabic-based words
+          if (labelWords[i].indexOf('osti') >= 0 || labelWords[i].indexOf('post') >= 0) {
+            patterns.push(labelWords[i].replace('osti', '[osti]'));
+            patterns.push(labelWords[i].replace('post', '[post]'));
+          }
+        }
+        for (var pi = 0; pi < patterns.length; pi++) {
+          var re = new RegExp(escapeRegExp(patterns[pi]) + '[\s:\\-]?', 'i');
+          var m = text.match(re);
+          if (m) {
+            var after = text.substring(m.index + m[0].length);
+            var parts = after.split(/\n/);
+            var val = parts[0];
+            val = val.replace(/^[:\s\-•●▪️◆★✅➖|¦]+/, '');
+            val = val.trim();
+            if (val.length > 0) return val;
+          }
+        }
+      }
+      return null;
+    }
+
+    // Name
+    var nameValue = extractAfterLabel(text, [
+      'نام و نام خانوادگی', 'نام ونام خانوادگی', 'نام‌ونام‌خانوادگی',
+      'گیرنده', 'نام', 'اسم', 'به نام', 'تحویل گیرنده', 'نام گیرنده'
+    ]);
+    if (nameValue !== null) { result.name = nameValue; }
+
+    // Phone
+    var phoneValue = extractAfterLabel(text, [
+      'شماره تماس', 'شماره همراه', 'شماره موبایل', 'تلفن همراه',
+      'تلفن', 'موبایل', 'تماس'
+    ]);
+    if (phoneValue !== null) { result.phone = phoneValue; }
+
+    // Address
+    var addressValue = extractAfterLabel(text, [
+      'آدرس پستی', 'آدرس کامل', 'نشانی', 'آدرس',
+      'نشانی کامل', 'مخاطبان'
+    ]);
+    if (addressValue !== null) { result.address = addressValue; }
+
+    // Postal - try multiple patterns
+    var postalValue = extractAfterLabel(text, [
+      'كوديستي', 'كودپستی', 'كد پستی', 'كدپستی', 'كد‌پستی', 'پستی', 'Postal'
+    ]);
+    if (postalValue !== null) { result.postal = postalValue; }
+
     return result;
   }
 
+  /* ---------- isProvince ---------- */
+  function isProvince(word) {
+    var cleanWord = word.replace(/[،,]/g, '').trim();
+    return PROVINCES[cleanWord] === 1;
+  }
+
+  /* ---------- main parser ---------- */
+  function parseCustomerText(text) {
+    var warnings = [];
+
+    if (typeof text !== 'string') {
+      return { name: '', phone: '', postalCode: '', address: '', province: undefined, warnings: ['کد پستی پیدا نشد'] };
+    }
+    text = text.trim();
+    if (text === '') {
+      return { name: '', phone: '', postalCode: '', address: '', province: undefined, warnings: ['کد پستی پیدا نشد'] };
+    }
+
+    var normalized = normalizeAll(text);
+    var labeled = extractLabeledFields(normalized);
+
+    // Extract phone
+    var phone = '';
+    var phoneWarning = '';
+    var [phoneVal, afterPhone] = extractPhoneAndRemainder(normalized);
+    if (phoneVal) {
+      phone = phoneVal;
+      if (!/^09\d{9}$/.test(phone)) { phone = ''; phoneWarning = 'شماره تماس ۱۱ رقمی نیست'; }
+    } else { if (!phoneWarning) phoneWarning = 'شماره موبایل نیست'; }
+
+    // Extract postal
+    var postal = '';
+    var postalWarning = '';
+    var [postalVal, afterPostal] = extractPostalAndRemainder(afterPhone);
+    if (postalVal) {
+      postal = postalVal;
+      if (!/^\d{10}$/.test(postal) || postal.startsWith('0')) { postal = ''; postalWarning = 'کد پستی ۱۰ رقمی نیست'; }
+    } else { postalWarning = 'کد پستی پیدا نشد'; }
+
+    // Name and address
+    var name = '';
+    var address = '';
+    var province = undefined;
+    var nameWarning = '';
+    var addressWarning = '';
+
+    var segments = afterPostal.split('\n');
+    var subSegments = [];
+    for (var s = 0; s < segments.length; s++) {
+      var seg = segments[s].trim();
+      if (seg.length > 0) {
+        var subParts = seg.split(/ {2,}/);
+        for (var p = 0; p < subParts.length; p++) {
+          subSegments.push(subParts[p].trim());
+        }
+      }
+    }
+
+    if (subSegments.length === 0) {
+      nameWarning = 'نام پیدا نشد';
+      addressWarning = 'آدرس پیدا نشد';
+    } else {
+      var nameFound = false;
+      var addressSegments = [];
+
+      for (var i = 0; i < subSegments.length; i++) {
+        var seg = subSegments[i];
+        var hasDigits = /\d/.test(seg);
+        var words = seg.split(' ');
+        var wordCount = words.filter(function (w) { return w.length > 0; }).length;
+        var firstWord = words[0] ? words[0].replace(/[،,]/g, '').trim() : '';
+        var startsWithProvince = isProvince(firstWord);
+        var startsWithKeyword = ADDRESS_KEYWORDS.test(firstWord);
+        var hasComma = seg.indexOf('،') >= 0;
+        var isNameCandidate = !hasDigits && wordCount >= 1 && wordCount <= 5 && !startsWithProvince && !startsWithKeyword && !hasComma;
+
+        if (!nameFound && isNameCandidate) {
+          name = seg;
+          nameFound = true;
+          for (var j = i + 1; j < subSegments.length; j++) {
+            addressSegments.push(subSegments[j]);
+          }
+        } else {
+          addressSegments.push(seg);
+        }
+      }
+
+      if (!nameFound) {
+        var firstSeg = subSegments[0];
+        var firstWords = firstSeg.split(' ');
+        var cappedWords = firstWords.slice(0, 5);
+        if (cappedWords.length > 0) name = cappedWords.join(' ');
+        for (var j = 1; j < subSegments.length; j++) {
+          addressSegments.push(subSegments[j]);
+        }
+        var firstWord = firstSeg.split(' ')[0] ? firstSeg.split(' ')[0].replace(/[،,]/g, '').trim() : '';
+        var firstSP = isProvince(firstWord);
+        var firstSK = ADDRESS_KEYWORDS.test(firstWord);
+        if (/\\d/.test(firstSeg) || firstSP || firstSK) { name = ''; nameWarning = 'نام پیدا نشد'; }
+      }
+
+      address = addressSegments.filter(function (s) { return s.length > 0; }).join('\n');
+      address = address.replace(/^[،,\s]+/, '');
+      address = address.replace(/[،,\s]+$/, '');
+
+      var addrFirstWord = address.split(' ')[0] ? address.split(' ')[0].replace(/[،,]/g, '').trim() : '';
+      if (isProvince(addrFirstWord)) province = addrFirstWord;
+    }
+
+    // Warnings
+    var allWarnings = [];
+    var seenWarnings = {};
+    function addWarning(key) { if (!seenWarnings[key]) { seenWarnings[key] = true; allWarnings.push(key); } }
+
+    if (phone === '' && !phoneWarning) addWarning('شماره تماس پیدا نشد');
+    if (phone !== '' && !/^09\d{9}$/.test(phone)) addWarning('شماره تماس ۱۱ رقمی نیست');
+    if (postal === '' && !postalWarning) addWarning('کد پستی پیدا نشد');
+    if (postal !== '' && !/^\d{10}$/.test(postal)) addWarning('کد پستی ۱۰ رقمی nisoAddedWarning');
+    if (postal !== '' && postal.startsWith('0')) addWarning('کد پستی شروع به صفر نمی‌شود');
+    if (name === '' && !nameWarning) addWarning('نام پیدا نشد');
+    if (name !== '' && nameWarning) addWarning(nameWarning);
+    if (address === '' && !addressWarning) addWarning('آدرس پیدا نشد');
+
+    if (name) name = name.replace(/^(nam|name|gerefte)\s*:?\s*/i, '').trim();
+    if (address) address = address.replace(/^(adrese|adrese posti)\s*:?\s*/i, '').trim();
+
+    return { name: name, phone: phone, postalCode: postal, address: address, province: province, warnings: allWarnings };
+  }
+
   /* ---------- export ---------- */
-
   root.parseCustomerText = parseCustomerText;
-
 })(typeof window !== 'undefined' ? window : this);

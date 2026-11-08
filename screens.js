@@ -608,10 +608,12 @@ var Screens = (function () {
       el('div', { class: 'card-title' }, el('h3', { text: 'اطلاعات مشتری' })),
       // Paste customer info area
       el('div', { class: 'field', style: 'margin-bottom:8px' },
-        el('textarea', { id: 'paste-customer-info', placeholder: 'متن اطلاعات مشتری را اینجا بچسبانید', rows: 2, style: 'width:100%; margin-bottom:4px;' }),
-        el('button', { id: 'paste-btn', type: 'button', text: 'استخراج خودکار', style: 'float:right;', onclick: function () { var t = prompt('اطلاعات مشتری را paste کنید:'); if (t && t.trim()) { var r = window.parseCustomerText(t); if (r.name) $('#no-customer').value = r.name; if (r.phone) $('#no-phone').value = r.phone; if (r.postalCode) $('#no-postal').value = r.postalCode; if (r.address) $('#no-address').value = r.address; var w = r.warnings || []; if (w.length > 0) { var h = $('#no-postal-hint'); if (h) h.innerHTML = w.map(function (x) { return '<div style="color:#d64a4a; font-size:12px; margin:2px 0;">' + x + '</div>'; }).join(''); } } } }),
-        el('button', { id: 'clear-paste-btn', type: 'button', text: 'پاک کردن', style: 'float:right; margin-right:8px; display:none;' })
+        el('textarea', { id: 'paste-customer-info', placeholder: 'متن اطلاعات مشتری را اینجا بچسبانید', rows: 4, dir: 'rtl', style: 'width:100%; margin-bottom:4px;',
+        onpaste: function () { setTimeout(function () { parsePasteCustomer(); }, 0); } }),
+        el('button', { id: 'paste-btn', type: 'button', text: 'استخراج خودکار', style: 'float:right;', onclick: function () { parsePasteCustomer(); } }),
+        el('button', { id: 'clear-paste-btn', type: 'button', text: 'پاک کردن', style: 'float:right; margin-right:8px; display:none;', onclick: function () { $('#paste-customer-info').value = ''; $('#paste-warnings').textContent = ''; $('#clear-paste-btn').style.display = 'none'; } })
       ),
+      el('div', { id: 'paste-warnings', style: 'margin-top:4px; color:#d64a4a; font-size:12px; min-height:20px;' }),
       el('div', { class: 'field' },
         el('label', { for: 'no-customer', text: 'نام مشتری' }),
         el('input', { type: 'text', id: 'no-customer', autocomplete: 'off', placeholder: 'نام و خانوادگی' })),
@@ -1095,7 +1097,56 @@ var Screens = (function () {
     var st = $('#no-status'); if (st) st.value = 'new';
     var hint = $('#no-postal-hint');
     if (hint) { hint.textContent = 'ارقام فارسی هم پذیرفته می‌شود'; hint.style.color = ''; }
+    /* Clear paste textarea and warnings */
+    var pt = $('#paste-customer-info');
+    if (pt) { pt.value = ''; }
+    var pw = $('#paste-warnings');
+    if (pw) { pw.textContent = ''; }
+    var cp = $('#clear-paste-btn');
+    if (cp) { cp.style.display = 'none'; }
     neworder.refresh();
+  }
+
+  /* ---------- parse pasted customer text ---------- */
+  function parsePasteCustomer() {
+    var textarea = $('#paste-customer-info');
+    if (!textarea) return;
+    var text = textarea.value.trim();
+    if (!text) return;
+
+    /* Ask before overwriting if form already has values in the four fields */
+    var customer = $('#no-customer').value.trim();
+    var phone = $('#no-phone').value.trim();
+    var address = $('#no-address').value.trim();
+    var postal = $('#no-postal').value.trim();
+    var hasExisting = customer || phone || address || postal;
+    if (hasExisting) {
+      var yes = await UI.confirm('مقادیر فعلی جایگزین شود؟', { title: 'تأیید تغییر', okLabel: 'بله', cancelLabel: 'خیر', danger: true });
+      if (!yes) return;
+    }
+
+    var r = window.parseCustomerText(text);
+    /* Fill fields (only if empty, unless user confirmed overwrite above) */
+    if (r.name) $('#no-customer').value = r.name;
+    if (r.phone) $('#no-phone').value = r.phone;
+    if (r.postalCode) $('#no-postal').value = r.postalCode;
+    if (r.address) $('#no-address').value = r.address;
+
+    /* Show warnings in new element under textarea */
+    var warningsEl = $('#paste-warnings');
+    if (warningsEl) {
+      warningsEl.textContent = '';
+      var w = r.warnings || [];
+      if (w.length > 0) {
+        w.forEach(function (x) {
+          warningsEl.appendChild(el('div', { style: 'color:#d64a4a; font-size:12px; margin:2px 0;' }, UI.toFaDigits(x)));
+        });
+      }
+    }
+
+    /* Show/hide clear button and focus */
+    textarea.value ? $('#clear-paste-btn').style.display = 'inline' : $('#clear-paste-btn').style.display = 'none';
+    textarea.focus();
   }
 
   async function saveOrder() {
