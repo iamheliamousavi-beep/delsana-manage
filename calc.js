@@ -18,7 +18,22 @@
      expectedSnap   = round1000(remainingGoods * multiplier)
      validation:    |P - expectedSnap| <= MIXED_TOLERANCE
    Old rows (fee inside the recorded cash part) keep the v4 path via the
-   fee_in_snapp flag, so legacy orders never change displayed values. */
+   fee_in_snapp flag, so legacy orders never change displayed values.
+   v6/v7 model (Snap Pay settles to the SHOP): Snap Pay always deposits the
+   customer's Snapp payment into the SHOP's account; the cash/card part is
+   received by the page. `owe` is the SHOP's entitlement (not a transfer
+   from the page) and `h_share` the page's. The Snap-paid goods money is
+   split between the two partners in the ratio of their entitlements:
+     shipSnap   = shipping_fee if shipping was paid via Snapp, else 0
+     net        = (owe - shipping_fee) + h_share   (goods value after discount)
+     goodsSnap  = snapp_deposit - shipSnap          (goods money via Snap Pay)
+     page_claim = 0    if net <= 0 or h_share <= 0 or goodsSnap <= 0
+                = min(goodsSnap, round_half_up(h_share * goodsSnap / net))
+     page_debt  = owe - snapp_deposit + page_claim  (always >= 0)
+   page_claim is the page's claim ON the shop («طلب پیج از مغازه»);
+   page_debt is the page's debt TO the shop («بدهی پیج به مغازه»).
+   The two accounts are independent and are never netted. Conservation:
+   (snapp_deposit - page_claim) + page_debt = owe. See Calc.pageSplit. */
 (function (root) {
   'use strict';
 
@@ -317,11 +332,15 @@
        payout; for mixed, total = payout + snapp_fee; the goods charge plus
        the shipping charge is exactly the customer total. */
     var goods_charge = customer_total - shipping_fee;
+    /* the partner split of the Snap-paid goods money (derived only) */
+    var pSplit = splitClaim(owe, h_share, shipping_fee, shipping_snapp, snapp_deposit);
     var invariant_ok = (owe + h_share) === payout &&
                        (snapp_charge + cash_charge) === customer_total &&
                        (snapp_deposit + cash_charge) === payout &&
                        (goods_charge + shipping_fee) === customer_total &&
-                       (method !== 'mixed' || customer_total === payout + snapp_fee);
+                       (method !== 'mixed' || customer_total === payout + snapp_fee) &&
+                       pSplit.page_claim >= 0 && pSplit.page_debt >= 0 &&
+                       (snapp_deposit - pSplit.page_claim + pSplit.page_debt) === owe;
     if (!invariant_ok) {
       throw new Error('خطای محاسباتی داخلی: پرداختی برابر با سهم‌ها نیست');
     }
@@ -359,6 +378,9 @@
       cash_charge: cash_charge,
       snapp_deposit: snapp_deposit,
       snapp_fee: snapp_fee,
+      /* derived only: the partner split of the Snap-paid goods money */
+      page_claim: pSplit.page_claim,
+      page_debt: pSplit.page_debt,
       /* all four invariants above hold */
       invariant_ok: invariant_ok,
       /* warnings only — never block the user */
@@ -398,6 +420,46 @@
       return Math.floor(Number(order.payout) || 0) - shipFee + shipSnap;
     }
     return shipSnap;
+  }
+
+  /* Core of the v6/v7 partner split (see the header): the Snap-paid goods
+     money is divided between shop and page in the ratio of their
+     entitlements. Exact BigInt half-up rounding — h_share * goodsSnap can
+     exceed 2^53. Mirrored by public.order_page_claim / order_page_debt
+     in setup.sql (migration 013); the two must agree. */
+  function splitClaim(owe, hShare, shipFee, shipSnap, deposit) {
+    var net = (owe - shipFee) + hShare;            /* goods value after discount */
+    var goodsSnapp = deposit - shipSnap;           /* goods money that went to the shop via Snap Pay */
+    var claim = 0;
+    if (net > 0 && hShare > 0 && goodsSnapp > 0) {
+      var num = BigInt(hShare) * BigInt(goodsSnapp);
+      var den = BigInt(net);
+      /* floor((2·num + den) / (2·den)) === round_half_up(num / den) */
+      claim = Number((2n * num + den) / (2n * den));
+      if (claim > goodsSnapp) claim = goodsSnapp;
+    }
+    return {
+      goods_snapp: goodsSnapp,
+      page_claim: claim,
+      /* always >= 0 for every method/legacy path (verified by the sweep) */
+      page_debt: owe - deposit + claim
+    };
+  }
+
+  /* The partner split for a stored order row or a calcOrder result:
+     { goods_snapp, page_claim, page_debt }. page_claim is the page's claim
+     on the shop («طلب پیج از مغازه») — collectable once the order reaches
+     `paid` (the UI/RPC gate on status; this stays money-only). */
+  function pageSplit(order) {
+    if (!order) return { goods_snapp: 0, page_claim: 0, page_debt: 0 };
+    var shipFee = Math.max(0, Math.floor(Number(order.shipping_fee) || 0));
+    var shipSnap = shippingPaymentMethod(order) === 'snapp' ? shipFee : 0;
+    return splitClaim(
+      Math.max(0, Math.floor(Number(order.owe) || 0)),
+      Math.floor(Number(order.h_share) || 0),
+      shipFee, shipSnap,
+      Math.max(0, Math.floor(Number(snappDeposit(order)) || 0))
+    );
   }
 
   /* Goods/shipping charge breakdown for a stored order row (card, invoice,
@@ -450,7 +512,7 @@
   }
 
   var Calc = {
-    VERSION: 6,
+    VERSION: 7,
     BEARERS: BEARERS,
     SHIPPING: SHIPPING,
     METHODS: METHODS,
@@ -460,6 +522,7 @@
     roundToStep: roundToStep,
     snappRound: snappRound,
     snappInverseRound: snappInverseRound,
+    parseMoney: parseMoney,
     parseSnappPart: parseSnappPart,
     parseCashPart: parseCashPart,
     splitDiscount: splitDiscount,
@@ -467,6 +530,7 @@
     shippingPaymentMethod: shippingPaymentMethod,
     snappDeposit: snappDeposit,
     orderSplit: orderSplit,
+    pageSplit: pageSplit,
     unitPrices: unitPrices
   };
 

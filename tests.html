@@ -29,7 +29,7 @@
 <table id="results">
   <thead>
     <tr>
-      <th>#</th><th>شرح</th><th>کل مشتری</th><th>پرداختی به مغازه</th><th>سهم پیج</th>
+      <th>#</th><th>شرح</th><th>کل مشتری</th><th>سهم مغازه</th><th>سهم پیج</th>
       <th>تسویه اسنپ‌پی</th><th>شبکه</th><th>ثابت</th><th>نتیجه</th>
     </tr>
   </thead>
@@ -93,6 +93,20 @@
 <table id="admin">
   <thead>
     <tr><th>#</th><th>شرح</th><th>نتیجه</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<h2>۷) تفکیک طلب پیج از مغازه (pageSplit — Snap Pay به حساب مغازه واریز می‌شود)</h2>
+<p class="inv">مثال‌های T1 تا T10 از پرامپت (ضریب ۱٫۱۳، قدم ۱۰۰۰، پست ۱۹۰٬۰۰۰، کالا ۵٬۰۰۰٬۰۰۰ + سود پیج ۵۰۰٬۰۰۰) + جاروب تصادفی.
+هر مثال واریزی اسنپ‌پی، طلب پیج و بدهی پیج را بررسی می‌کند؛ ثابت‌ها: <code>page_claim ≥ 0</code>، <code>page_debt ≥ 0</code>،
+<code>(واریزی − طلب) + بدهی = سهم مغازه</code> و <code>طلب ≤ سهم پیج</code>. دو حساب («طلب پیج از مغازه» و «بدهی پیج به مغازه») هیچ‌جا با هم خالص نمی‌شوند.</p>
+<table id="pagesplit">
+  <thead>
+    <tr>
+      <th>#</th><th>شرح</th><th>واریزی اسنپ‌پی (به مغازه)</th><th>طلب پیج از مغازه</th>
+      <th>بدهی پیج به مغازه</th><th>نتیجه</th>
+    </tr>
   </thead>
   <tbody></tbody>
 </table>
@@ -1192,6 +1206,223 @@
     }
     return true;
   });
+
+  /* ================== 7) pageSplit — Snap Pay settles to the SHOP ======= */
+
+  var PS_TBODY = document.querySelector('#pagesplit tbody');
+
+  function psOrder(extra) {
+    var o = {
+      items: [{ qty: 1, base: 5000000, hp: 500000 }],
+      discount: 0, discount_bearer: 'helia',
+      shipping_method: 'courier', payment_method: 'snapp',
+      post_fee: 190000, snapp_multiplier: 1.13, rounding_step: 1000
+    };
+    if (extra) for (var k in extra) o[k] = extra[k];
+    return o;
+  }
+
+  /* one table row; `view` = { deposit, claim, debt, owe?, h_share? } or an
+     Error; `exp` = the expected subset */
+  function addPS(name, view, exp) {
+    /* view = { deposit, claim, debt }, null = logical check with no numeric
+       cells, or an Error */
+    var hasView = view !== null && !(view instanceof Error);
+    var checks = [], allOk;
+    if (view instanceof Error) {
+      checks.push({ k: 'بدون خطا', ok: false, exp: '', got: view.message });
+    } else if (hasView) {
+      ['deposit', 'claim', 'debt'].forEach(function (k) {
+        if (exp[k] !== undefined) {
+          checks.push({ k: k, ok: view[k] === exp[k], exp: exp[k], got: view[k] });
+        }
+      });
+      /* the section-1 invariants, on every case */
+      if (exp.owe !== undefined) {
+        checks.push({ k: 'conservation', ok: (view.deposit - view.claim) + view.debt === exp.owe,
+          exp: exp.owe, got: (view.deposit - view.claim) + view.debt });
+      }
+      if (exp.h_share !== undefined && exp.h_share > 0) {
+        checks.push({ k: 'claim<=h', ok: view.claim <= exp.h_share, exp: '<=' + exp.h_share, got: view.claim });
+      }
+      checks.push({ k: 'nonneg', ok: view.claim >= 0 && view.debt >= 0, exp: true, got: view.claim + '/' + view.debt });
+    }
+    allOk = checks.every(function (x) { return x.ok; });
+    record(name, allOk, allOk ? '' : checks.filter(function (x) { return !x.ok; })
+      .map(function (x) { return x.k + ' exp=' + x.exp + ' got=' + x.got; }).join(' | '));
+
+    var tr = document.createElement('tr');
+    var cells = [
+      String(PS_TBODY.rows.length + 1), name,
+      hasView ? String(view.deposit) : '—',
+      hasView ? String(view.claim) : '—',
+      hasView ? String(view.debt) : '—',
+      allOk ? 'PASS' : 'FAIL — ' + checks.filter(function (x) { return !x.ok; })
+        .map(function (x) { return x.k + ' exp=' + x.exp + ' got=' + x.got; }).join(' | ')
+    ];
+    cells.forEach(function (t, idx) {
+      var td = document.createElement('td');
+      td.textContent = t;
+      if (idx === cells.length - 1) td.className = allOk ? 'pass' : 'fail';
+      tr.appendChild(td);
+    });
+    PS_TBODY.appendChild(tr);
+  }
+
+  /* T1..T9 run through the real calcOrder; T10 is a stored legacy row */
+  [
+    { d: 'T1 اسنپ‌پی خالص، پیک', in: {},
+      exp: { deposit: 5500000, owe: 5000000, claim: 500000, debt: 0, h_share: 500000 } },
+    { d: 'T2 اسنپ‌پی خالص، پست، ارسال نقدی', in: { shipping_method: 'post', shipping_payment_method: 'cash' },
+      exp: { deposit: 5500000, owe: 5190000, claim: 500000, debt: 190000, h_share: 500000 } },
+    { d: 'T3 اسنپ‌پی خالص، پست، ارسال اسنپ‌پی', in: { shipping_method: 'post', shipping_payment_method: 'snapp' },
+      exp: { deposit: 5690000, owe: 5190000, claim: 500000, debt: 0, h_share: 500000 } },
+    { d: 'T4 نقدی خالص، پیک', in: { payment_method: 'cash' },
+      exp: { deposit: 0, owe: 5000000, claim: 0, debt: 5000000, h_share: 500000 } },
+    { d: 'T5 ترکیبی v5: نقدی ۱۰۰هزار + اسنپ ۶٬۱۰۰هزار، پیک',
+      in: { payment_method: 'mixed', fee_in_snapp: true, cash_part: 100000, snapp_part: 6100000 },
+      exp: { deposit: 5400000, owe: 5000000, claim: 490909, debt: 90909, h_share: 500000 } },
+    { d: 'T6 ترکیبی v5: نقدی ۴میلیون + اسنپ ۱٬۶۹۵هزار، پیک',
+      in: { payment_method: 'mixed', fee_in_snapp: true, cash_part: 4000000, snapp_part: 1695000 },
+      exp: { deposit: 1500000, owe: 5000000, claim: 136364, debt: 3636364, h_share: 500000 } },
+    { d: 'T7 اسنپ‌پی خالص، پیک، تخفیف ۱۰۰هزار بر عهده مغازه', in: { discount: 100000, discount_bearer: 'mahdi' },
+      exp: { deposit: 5400000, owe: 4900000, claim: 500000, debt: 0, h_share: 500000 } },
+    { d: 'T8 اسنپ‌پی خالص، پیک، تخفیف ۱۰۰هزار بر عهده پیج', in: { discount: 100000, discount_bearer: 'helia' },
+      exp: { deposit: 5400000, owe: 5000000, claim: 400000, debt: 0, h_share: 400000 } },
+    { d: 'T9 کالا نقدی + ارسال اسنپ‌پی، پست',
+      in: { payment_method: 'cash', shipping_method: 'post', shipping_payment_method: 'snapp' },
+      exp: { deposit: 190000, owe: 5190000, claim: 0, debt: 5000000, h_share: 500000 } }
+  ].forEach(function (c) {
+    var r = null, err = null;
+    try { r = Calc.calcOrder(psOrder(c.in)); } catch (e) { err = e; }
+    addPS(c.d, err || { deposit: r.snapp_deposit, claim: r.page_claim, debt: r.page_debt }, c.exp);
+  });
+
+  /* T10: a legacy mixed row (fee_in_snapp=false, test M2) — stored shape */
+  (function () {
+    var t10 = {
+      method: 'mixed', fee_in_snapp: false, shipping_fee: 190000, shipping_payment_method: 'cash',
+      payout: 840000, owe: 690000, h_share: 150000, snapp_deposit: 275000,
+      cash_charge: 565000, snapp_part: 325000, snapp_fee: 50000
+    };
+    var sp = Calc.pageSplit(t10);
+    addPS('T10 سطر قدیمی ترکیبی (fee_in_snapp=false، تست M2)',
+      { deposit: t10.snapp_deposit, claim: sp.page_claim, debt: sp.page_debt },
+      { deposit: 275000, owe: 690000, claim: 63462, debt: 478462, h_share: 150000 });
+  })();
+
+  /* pageSplit must accept both shapes identically (calcOrder result and a
+     plain stored row) */
+  addPS('pageSplit: نتیجه calcOrder = سطر ذخیره‌شده (همه مثال‌ها)', (function () {
+    var cases = [
+      psOrder({}), psOrder({ shipping_method: 'post', shipping_payment_method: 'cash' }),
+      psOrder({ payment_method: 'cash' }),
+      psOrder({ payment_method: 'mixed', fee_in_snapp: true, cash_part: 100000, snapp_part: 6100000 })
+    ];
+    for (var i = 0; i < cases.length; i++) {
+      var r = Calc.calcOrder(cases[i]);
+      var a = Calc.pageSplit(r);
+      var b = Calc.pageSplit(Object.assign({}, r));
+      if (a.page_claim !== b.page_claim || a.page_debt !== b.page_debt) {
+        return new Error('shape ' + i + ': ' + a.page_claim + '/' + a.page_debt + ' vs ' + b.page_claim + '/' + b.page_debt);
+      }
+    }
+    return null;
+  })(), {});
+
+  /* seeded sweep, 500 combos — the SQL test (tests/page_claims.sql) embeds
+     the very same tuples and asserts order_page_claim/order_page_debt equal
+     these JS values exactly (integer-exact LCG, identical on both sides) */
+  (function () {
+    var seed = 14050507n;
+    function rnd(n) {
+      seed = (seed * 1103515245n + 12345n) % 2147483648n;
+      return Number(seed % BigInt(n));
+    }
+    function pick(arr) { return arr[rnd(arr.length)]; }
+    function combo() {
+      var nItems = 1 + rnd(3), items = [];
+      for (var j = 0; j < nItems; j++) {
+        items.push({ qty: 1 + rnd(3), base: pick([0, 30000, 500000, 5000000]), hp: pick([0, 20000, 500000, 500000]) });
+      }
+      var sub = items.reduce(function (a, it) { return a + it.qty * (it.base + it.hp); }, 0);
+      if (sub <= 0) return null;
+      var pct = rnd(11);
+      var method = pick(['cash', 'snapp', 'mixed']);
+      var shipPay = pick(['cash', 'snapp']);
+      var o = {
+        items: items, discount: Math.floor((sub * pct) / 10),
+        discount_bearer: pick(['helia', 'mahdi', 'split']),
+        shipping_method: pick(['post', 'courier']),
+        payment_method: method,
+        shipping_payment_method: shipPay,
+        post_fee: 190000, snapp_multiplier: 1.13, rounding_step: 1000
+      };
+      if (method === 'mixed') {
+        var net = sub - o.discount;
+        if (net < 1000) return null;
+        if (rnd(3) === 0) {                       /* legacy v4 row */
+          o.fee_in_snapp = false;
+          o.snapp_part = (1 + rnd(5)) * 100000;
+        } else {
+          o.fee_in_snapp = true;
+          o.cash_part = Math.floor((net * rnd(10)) / 10);
+          o.snapp_part = Calc.snappRound(net - o.cash_part, o.snapp_multiplier, Calc.MIXED_ROUND);
+        }
+      }
+      return o;
+    }
+
+    var tuples = [], attempts = 0;
+    while (tuples.length < 500 && attempts < 4000) {
+      attempts++;
+      var o = combo();
+      if (o === null) continue;
+      var r;
+      try { r = Calc.calcOrder(o); } catch (e) { continue; }
+      var sp = Calc.pageSplit(r);
+      var st = Calc.pageSplit(Object.assign({}, r));
+      if (st.page_claim !== sp.page_claim || st.page_debt !== sp.page_debt) {
+        addPS('جاروب ' + tuples.length + ': ناسازگاری شکل', new Error('shape'), {});
+        return;
+      }
+      /* hard failure rule: report, never clamp */
+      if (sp.page_claim < 0 || sp.page_debt < 0) {
+        addPS('جاروب ' + tuples.length + ': منفی!', new Error('claim=' + sp.page_claim + ' debt=' + sp.page_debt), {});
+        return;
+      }
+      tuples.push([
+        r.customer_total, r.owe, r.h_share, r.payout, r.snapp_part, r.snapp_charge, r.cash_charge,
+        r.snapp_fee, r.snapp_deposit, r.shipping_fee,
+        { cash: 0, snapp: 1, mixed: 2 }[r.payment_method], r.fee_in_snapp ? 1 : 0,
+        r.shipping_payment_method === 'snapp' ? 1 : 0, sp.page_claim, sp.page_debt
+      ]);
+    }
+
+    var bad = [];
+    tuples.forEach(function (t, i) {
+      var claim = t[13], debt = t[14];
+      if (claim < 0 || debt < 0) bad.push(i + ':neg');
+      if ((t[8] - claim) + debt !== t[1]) bad.push(i + ':conservation');
+      if (t[2] > 0 && claim > t[2]) bad.push(i + ':claim>h');
+    });
+    record('جاروب ۵۰۰ ترکیب تصادفی (همه روش‌ها × بنر ارسال × تخفیف × قدیمی)',
+      bad.length === 0, bad.length === 0 ? '' : bad.slice(0, 5).join(', '));
+    var tr = document.createElement('tr');
+    var td1 = document.createElement('td'); td1.textContent = '';
+    var td2 = document.createElement('td'); td2.textContent = 'جاروب ۵۰۰ ترکیب — تعداد ترکیب‌های سالم: ' + UI.toFaDigits(String(tuples.length));
+    var td3 = document.createElement('td'); td3.textContent = '—';
+    var td4 = document.createElement('td'); td4.textContent = '—';
+    var td5 = document.createElement('td'); td5.textContent = '—';
+    var td6 = document.createElement('td');
+    td6.textContent = bad.length === 0 ? 'PASS' : 'FAIL — ' + bad.slice(0, 3).join(', ');
+    td6.className = bad.length === 0 ? 'pass' : 'fail';
+    tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4); tr.appendChild(td5); tr.appendChild(td6);
+    PS_TBODY.appendChild(tr);
+
+    /* the tuples are embedded in tests/page_claims.sql (tmp-gen-sweep.js) */
+    window.__PS_TUPLES__ = tuples;
+  })();
 
   var box = document.getElementById('summary');
   if (fail === 0) {

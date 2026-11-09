@@ -159,7 +159,7 @@ const CONFIG = {
     var btn = $('#btn-refresh');
     if (showSpinner && btn) btn.classList.add('busy');
     try {
-      await Promise.all([DB.loadProducts(), DB.loadOrders(), DB.loadSettings()]);
+      await Promise.all([DB.loadProducts(), DB.loadOrders(), DB.loadClaims(), DB.loadSettings()]);
       updatePinnedBadge();
       var screen = Screens[state.view];
       if (screen && screen.refresh) await screen.refresh();

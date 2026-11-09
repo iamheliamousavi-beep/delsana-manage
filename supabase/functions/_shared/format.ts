@@ -296,7 +296,7 @@ const ADMIN_FIELD_FA: Record<string, string> = {
   items: 'کالاها',
   total: 'مبلغ کل',
   payout: 'پرداختی',
-  owe: 'پرداختی به مغازه',
+  owe: 'سهم مغازه',
   h_share: 'سهم پیج',
 };
 
@@ -374,10 +374,10 @@ export function buildInvoice(order: Order): string {
   lines.push(`💰 مبلغ کل مشتری: ${money(total)} تومان`);
   if (snap > 0) lines.push(`دریافتی اسنپ‌پی: ${money(snap)} تومان`);
   if (cash > 0) lines.push(`دریافتی نقدی / کارت: ${money(cash)} تومان`);
-  if (deposit > 0) lines.push(`واریزی اسنپ‌پی: ${money(deposit)} تومان`);
+  if (deposit > 0) lines.push(`واریزی اسنپ‌پی (به مغازه): ${money(deposit)} تومان`);
   lines.push('');
   lines.push('📊 حساب‌وکتاب');
-  lines.push(`به مغازه: ${money(order.owe)}`);
+  lines.push(`سهم مغازه: ${money(order.owe)}`);
   lines.push(`سهم پیج: ${money(order.h_share)}`);
   lines.push('');
   lines.push(`📌 وضعیت: ${statusLabel(order.status)}`);

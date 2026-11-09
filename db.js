@@ -14,6 +14,8 @@
     settings: { post_fee: 190000, snapp_multiplier: 1.15, rounding_step: 5000, telegram_paused: false },
     products: [],
     orders: [],
+    /* «طلب پیج از مغازه» ledger (migration 013) */
+    claims: { receipts: [], allocations: [] },
     view: 'products',
     online: true,
     channel: null,
@@ -94,7 +96,7 @@
   DB.signOut = async function () {
     try { await App.supabase.auth.signOut(); } catch (e) { /* already signed out */ }
     App.user = null; App.profile = null; App.role = null; App.isMahdi = false; App.isAdmin = false;
-    App.products = []; App.orders = [];
+    App.products = []; App.orders = []; App.claims = { receipts: [], allocations: [] };
   };
 
   /* Load the signed-in user's profile row (role). */
@@ -299,6 +301,42 @@
     return n || 0;
   };
 
+  /* ------------------------------------------------- page claims (013) */
+  /* «طلب پیج از مغازه» — the claim itself is DERIVED per order with
+     Calc.pageSplit; these two tables only hold the receipts the page
+     recorded when the shop paid, and their per-invoice allocations. */
+  DB.loadClaims = async function () {
+    var receipts = await fetchAll(
+      'page_claim_receipts',
+      'id, created_at, created_by, received_on, amount, note, voided_at, voided_by',
+      'created_at', false
+    );
+    var allocations = await fetchAll(
+      'page_claim_allocations',
+      'id, receipt_id, order_id, amount, customer, order_created_at',
+      'order_created_at', true
+    );
+    App.claims = { receipts: receipts, allocations: allocations };
+    return App.claims;
+  };
+
+  DB.recordPageClaimReceipt = function (amount, receivedOn, note, allocations) {
+    return DB.rpc('record_page_claim_receipt', {
+      p_amount: amount,
+      p_received_on: receivedOn,
+      p_note: note || null,
+      /* null = automatic FIFO (oldest invoices first) */
+      p_allocations: allocations || null
+    });
+  };
+
+  DB.voidPageClaimReceipt = function (id, reason) {
+    return DB.rpc('void_page_claim_receipt', {
+      p_receipt_id: id,
+      p_reason: reason || null
+    });
+  };
+
   /* --------------------------------------------------- admin (part B) */
   /* Admin-only RPCs (migration 010). The server enforces is_admin(); the UI
      only hides the buttons. After every mutation the caller reloads. */
@@ -443,7 +481,8 @@
   DB.subscribe = function (onChange) {
     if (App.channel) return App.channel;
     var ch = App.supabase.channel('delsana-realtime');
-    ['orders', 'products', 'settings'].forEach(function (table) {
+    ['orders', 'products', 'settings', 'page_claim_receipts', 'page_claim_allocations']
+      .forEach(function (table) {
       ch = ch.on('postgres_changes', { event: '*', schema: 'public', table: table },
         function (payload) { onChange(table, payload); });
     });

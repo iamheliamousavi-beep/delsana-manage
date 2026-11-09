@@ -46,6 +46,27 @@ var Screens = (function () {
       el('span', { class: 'v', text: v }));
   }
 
+  /* ---------- page-claims ledger (migration 013) ---------- */
+
+  /* received so far for one order: the allocations of NON-voided receipts */
+  function claimsReceivedFor(orderId) {
+    var cl = App.claims || { receipts: [], allocations: [] };
+    var live = {};
+    cl.receipts.forEach(function (r) { if (!r.voided_at) live[r.id] = true; });
+    var sum = 0;
+    cl.allocations.forEach(function (a) {
+      if (a.order_id === orderId && live[a.receipt_id]) sum += Number(a.amount) || 0;
+    });
+    return sum;
+  }
+
+  /* which orders the ledger may collect on: Snap Pay must have settled to
+     the shop first (never new / awaiting_snapp / cancelled) */
+  function claimEligible(o) {
+    return o.status === 'paid' || o.status === 'settled' ||
+           o.status === 'shipped' || o.status === 'delivered';
+  }
+
   function showErr(e) { UI.toast(UI.errMessage(e), 'err'); }
 
   /* Re-render the orders list, but first let go of any tracking input the
@@ -1063,10 +1084,17 @@ var Screens = (function () {
     if (r.snapp_charge > 0) rows.push(['دریافتی اسنپ‌پی', UI.fmtMoney(r.snapp_charge), '']);
     if (r.cash_charge > 0) rows.push(['دریافتی نقدی/کارت', UI.fmtMoney(r.cash_charge), 'cash']);
     rows.push(
-      ['پرداختی به مغازه', UI.fmtMoney(r.owe), ''],
+      ['سهم مغازه', UI.fmtMoney(r.owe), ''],
       ['سهم پیج', UI.fmtMoney(r.h_share), '']);
     if (r.snapp_deposit > 0) {
-      rows.push(['واریزی اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), '']);
+      rows.push(['واریزی اسنپ‌پی به مغازه', UI.fmtMoney(r.snapp_deposit), '']);
+    }
+    if (r.page_claim > 0) {
+      rows.push({ k: 'طلب پیج از مغازه', v: UI.fmtMoney(r.page_claim),
+        hint: 'سهم پیج از پولِ اسنپ‌پی که به مغازه واریز می‌شود' });
+    }
+    if (r.page_debt > 0) {
+      rows.push(['بدهی پیج به مغازه', UI.fmtMoney(r.page_debt), '']);
     }
 
     rows.forEach(function (row) {
@@ -1330,6 +1358,11 @@ var Screens = (function () {
         class: 'btn small', type: 'button', text: 'خروجی CSV',
         title: 'خروجی اکسل (فارسی)، شامل همه سفارش‌ها',
         onclick: exportCSV
+      }),
+      el('button', {
+        class: 'btn small', type: 'button', text: 'خروجی دریافتی‌ها (CSV)',
+        title: 'خروجی اکسل (فارسی) از دریافتی‌های «طلب پیج از مغازه»',
+        onclick: exportReceiptsCSV
       })
     ));
 
@@ -1467,7 +1500,7 @@ var Screens = (function () {
     /* money — both partners see the same cells (section 3.3) */
     var money = el('div', { class: 'money-grid' },
       moneyCell('مبلغ مشتری', UI.fmtMoney(o.total), 'hero'),
-      moneyCell('به مغازه', UI.fmtMoney(o.owe)),
+      moneyCell('سهم مغازه', UI.fmtMoney(o.owe)),
       moneyCell('سهم پیج', UI.fmtMoney(o.h_share))
     );
     if (o.discount > 0) {
@@ -1497,6 +1530,27 @@ var Screens = (function () {
     }
     if (Calc.snappDeposit(o) > 0) {
       money.appendChild(moneyCell('واریزی اسنپ‌پی', UI.fmtMoney(Calc.snappDeposit(o))));
+    }
+    /* two SEPARATE accounts, never netted: the page's claim ON the shop and
+       the page's debt TO the shop (v6/v7 model) */
+    var psp = Calc.pageSplit(o);
+    if (psp.page_claim > 0) {
+      var claimCell = el('div', { class: 'money-cell' },
+        el('span', { class: 'k', text: 'طلب پیج از مغازه' }),
+        el('span', { class: 'v', text: UI.fmtMoney(psp.page_claim) }));
+      if (o.status === 'awaiting_snapp') {
+        claimCell.appendChild(el('span', { class: 'pill muted', text: 'پس از واریز اسنپ‌پی' }));
+      } else {
+        var got = claimsReceivedFor(o.id);
+        claimCell.appendChild(el('span', {
+          class: 'pill' + (got >= psp.page_claim ? ' ok' : ' brand'),
+          text: 'دریافت شده ' + UI.fmtMoney(got) + ' از ' + UI.fmtMoney(psp.page_claim)
+        }));
+      }
+      money.appendChild(claimCell);
+    }
+    if (psp.page_debt > 0) {
+      money.appendChild(moneyCell('بدهی پیج به مغازه', UI.fmtMoney(psp.page_debt), 'warn'));
     }
     card.appendChild(money);
 
@@ -1627,7 +1681,7 @@ var Screens = (function () {
     snapp_part: 'مبلغ اسنپ‌پی', cash_part: 'مبلغ نقدی مشتری', discount: 'تخفیف', discount_bearer: 'بر عهده تخفیف',
     tracking: 'کد رهگیری', status: 'وضعیت', shipping_fee: 'هزینه ارسال',
     snapp_multiplier: 'ضریب اسنپ‌پی', rounding_step: 'گرد کردن', items: 'کالاها',
-    total: 'مبلغ کل', payout: 'پرداختی', owe: 'پرداختی به مغازه', h_share: 'سهم پیج'
+    total: 'مبلغ کل', payout: 'پرداختی', owe: 'سهم مغازه', h_share: 'سهم پیج'
   };
 
   function adminFieldFa(k) { return ADMIN_FIELD_FA[k] || k; }
@@ -1824,10 +1878,17 @@ var Screens = (function () {
         ['پرداخت هزینه کالا (' + UI.methodLabel(r.payment_method) + ')', UI.fmtMoney(r.goods_charge), ''],
         ['پرداخت هزینه ارسال (' + UI.shippingPaymentLabel(r.shipping_payment_method) + ')', UI.fmtMoney(r.shipping_charge), ''],
         ['مبلغ قابل پرداخت مشتری', UI.fmtMoney(r.customer_total), 'total'],
-        ['پرداختی به مغازه', UI.fmtMoney(r.owe), ''],
+        ['سهم مغازه', UI.fmtMoney(r.owe), ''],
         ['سهم پیج', UI.fmtMoney(r.h_share), '']);
       if (r.snapp_deposit > 0) {
-        rows.push(['واریزی اسنپ‌پی به پیج', UI.fmtMoney(r.snapp_deposit), '']);
+        rows.push(['واریزی اسنپ‌پی به مغازه', UI.fmtMoney(r.snapp_deposit), '']);
+      }
+      if (r.page_claim > 0) {
+        rows.push({ k: 'طلب پیج از مغازه', v: UI.fmtMoney(r.page_claim),
+          hint: 'سهم پیج از پولِ اسنپ‌پی که به مغازه واریز می‌شود' });
+      }
+      if (r.page_debt > 0) {
+        rows.push(['بدهی پیج به مغازه', UI.fmtMoney(r.page_debt), '']);
       }
       rows.forEach(function (row) {
         var label = row.k !== undefined ? row.k : row[0];
@@ -2070,7 +2131,8 @@ var Screens = (function () {
       'snapp_part', 'snapp_charge', 'cash_charge', 'snapp_fee', 'snapp_deposit',
       'goods_charge', 'shipping_charge', 'goods_snapp_charge', 'goods_cash_charge',
       'shipping_snapp_charge', 'shipping_cash_charge',
-      'status', 'tracking', 'pinned', 'pin_note', 'note'
+      'status', 'tracking', 'pinned', 'pin_note', 'note',
+      'page_claim', 'page_debt', 'page_claim_received'
     ];
 
     var rows = [header];
@@ -2081,6 +2143,7 @@ var Screens = (function () {
         return it.name + ' ×' + it.qty;
       }).join(' | ');
       var split = Calc.orderSplit(o);
+      var psp = Calc.pageSplit(o);
       rows.push([
         o.id, o.created_at, o.customer, o.phone, o.postal_code, o.address, items,
         o.method, o.shipping_method, split.shipping_payment_method, o.shipping_fee, o.snapp_multiplier, o.rounding_step,
@@ -2089,11 +2152,34 @@ var Screens = (function () {
         o.snapp_part || 0, o.snapp_charge || 0, o.cash_charge || 0, o.snapp_fee || 0, o.snapp_deposit || 0,
         split.goods_charge, split.shipping_charge, split.goods_snapp_charge, split.goods_cash_charge,
         split.shipping_snapp_charge, split.shipping_cash_charge,
-        UI.statusLabel(o.status), o.tracking, o.pinned ? 'yes' : 'no', o.pin_note, o.note
+        UI.statusLabel(o.status), o.tracking, o.pinned ? 'yes' : 'no', o.pin_note, o.note,
+        psp.page_claim, psp.page_debt, claimsReceivedFor(o.id)
       ]);
     });
     UI.downloadCSV('delsana-orders-' + UI.toLocalInputDate(new Date()) + '.csv', rows);
     UI.toast('خروجی CSV دانلود شد', 'ok');
+  }
+
+  /* one row per receipt (migration 013): the ledger's own backup */
+  function exportReceiptsCSV() {
+    var cl = App.claims || { receipts: [], allocations: [] };
+    var header = ['receipt_id', 'received_on', 'amount', 'note', 'created_at (ISO)',
+      'voided', 'voided_at (ISO)', 'invoices'];
+    var rows = [header];
+    cl.receipts.slice().sort(function (a, b) {
+      return new Date(b.created_at) - new Date(a.created_at);
+    }).forEach(function (r) {
+      var invs = cl.allocations.filter(function (a) { return a.receipt_id === r.id; })
+        .map(function (a) {
+          return a.customer + ' · ' + UI.fmtDate(a.order_created_at) + ' · ' + UI.fmtMoney(a.amount);
+        }).join(' | ');
+      rows.push([
+        r.id, r.received_on, r.amount, r.note, r.created_at,
+        r.voided_at ? 'yes' : 'no', r.voided_at, invs
+      ]);
+    });
+    UI.downloadCSV('delsana-page-claim-receipts-' + UI.toLocalInputDate(new Date()) + '.csv', rows);
+    UI.toast('خروجی CSV دریافتی‌ها دانلود شد', 'ok');
   }
 
   /* ========================================================== post import */
@@ -2597,6 +2683,10 @@ var Screens = (function () {
         return rows.reduce(function (s, o) { return s + Number(o[f] || 0); }, 0);
       };
 
+      /* v6/v7 model: Snap Pay settles to the SHOP. The claims ledger sits
+         at the top and is visible to both partners (identical numbers). */
+      body.appendChild(claimsCard());
+
       /* bucket 0: money has not arrived yet (section 5.9) */
       var fresh = live.filter(function (o) { return o.status === 'new'; });
       body.appendChild(bucketCard({
@@ -2613,37 +2703,49 @@ var Screens = (function () {
         empty: 'سفارشی در انتظار پول ندارید ✓'
       }));
 
-      /* bucket 1: Snapp Pay pending (money lands on the page account).
-         Sums and rows use the Snapp deposit (S for mixed, payout for snapp). */
+      /* bucket 1: Snap Pay pending — the money has not reached the SHOP's
+         account yet. Sums and rows use the Snapp deposit. */
       var snapp = live.filter(function (o) { return o.status === 'awaiting_snapp'; });
       body.appendChild(bucketCard({
         title: 'در انتظار تسویه اسنپ‌پی',
-        hint: 'پول این سفارش‌ها هنوز به حساب پیج نرسیده است',
+        hint: 'پول این سفارش‌ها هنوز به حساب مغازه واریز نشده است',
         kind: 'snapp',
         rows: snapp,
         sumLabel: 'جمع در انتظار',
         sum: snapp.reduce(function (s, o) { return s + Calc.snappDeposit(o); }, 0),
         accent: 'warn',
-        bulkLabel: 'ثبت همه به‌عنوان دریافت‌شده',
+        bulkLabel: 'ثبت همه به‌عنوان واریزشده به مغازه',
         bulkTarget: 'paid',
-        rowLabel: 'پول رسید',
+        doneLabel: 'واریزشده به مغازه',
+        rowLabel: 'واریز شد به مغازه',
         empty: 'سفارش در انتظار اسنپ‌پی ندارید ✓'
       }));
 
-      /* bucket 2: the page owes the shop (money received, not transferred) */
-      var owed = live.filter(function (o) { return o.status === 'paid'; });
+      /* bucket 2: the page's debt to the shop — the shop's share inside the
+         money the page received in cash/card (page_debt, never owe and
+         never netted against the page's claim above). */
+      var paid = live.filter(function (o) { return o.status === 'paid'; });
+      var inDebt = paid.filter(function (o) { return Calc.pageSplit(o).page_debt > 0; });
+      var noDebt = paid.filter(function (o) { return Calc.pageSplit(o).page_debt <= 0; });
       body.appendChild(bucketCard({
         title: 'بدهی پیج به مغازه',
-        hint: 'سفارش‌هایی که پول مشتری رسیده ولی هنوز به مغازه منتقل نشده',
+        hint: 'سهم مغازه داخل پول نقدی/کارتی که نزد پیج است',
         kind: 'owed',
-        rows: owed,
+        rows: inDebt,
+        rowValue: function (o) { return Calc.pageSplit(o).page_debt; },
         sumLabel: 'جمع بدهی',
-        sum: sumOf(owed, 'owe'),
+        sum: inDebt.reduce(function (s, o) { return s + Calc.pageSplit(o).page_debt; }, 0),
         accent: 'accent',
         bulkLabel: 'ثبت همه به‌عنوان تسویه‌شده',
         bulkTarget: 'settled',
         rowLabel: 'تسویه شد',
-        empty: 'بدهی بازی ندارید ✓'
+        empty: 'بدهی پیج به مغازه ندارید ✓',
+        sub: {
+          title: 'بدون بدهی به مغازه',
+          hint: 'پول به مغازه رسیده؛ فقط باید به «آماده ارسال» برود',
+          rows: noDebt,
+          rowLabel: 'آماده ارسال'
+        }
       }));
 
       /* bucket 3: ready to ship (shop only) */
@@ -2688,6 +2790,489 @@ var Screens = (function () {
       }
     }
   };
+
+  /* ====================================================== PAGE CLAIMS (B) */
+  /* «طلب پیج از مغازه» — the page's profit share inside money that Snap Pay
+     paid to the SHOP. Derived per order with Calc.pageSplit; the recorded
+     receipts + allocations live in App.claims (migration 013). The two
+     accounts (claim here, debt in the bucket below) are never netted. */
+
+  var claimsFilter = 'open';          /* 'open' | 'done' | 'all' */
+  var claimsExpanded = {};            /* order_id -> true while «جزئیات» is open */
+
+  function canWriteClaims() {
+    return App.role === 'helia' || App.isAdmin;
+  }
+
+  /* full bookkeeping for the ledger, recomputed on every repaint */
+  function claimsBook() {
+    var book = { invoices: [], pendingSnapp: 0, totalClaim: 0, totalReceived: 0, remaining: 0, mismatches: [] };
+    var withAlloc = {};
+    (App.claims ? App.claims.allocations : []).forEach(function (a) {
+      if (claimsReceiptLive(a.receipt_id)) withAlloc[a.order_id] = true;
+    });
+    App.orders.forEach(function (o) {
+      if (o.status === 'cancelled' && !withAlloc[o.id]) return;
+      var split = Calc.pageSplit(o);
+      var received = claimsReceivedFor(o.id);
+      var eligible = claimEligible(o);
+
+      if (o.status === 'awaiting_snapp' && !withAlloc[o.id]) {
+        book.pendingSnapp += split.page_claim;
+        return;
+      }
+      if (!eligible && !withAlloc[o.id]) {
+        /* not collectable and nothing recorded (new/cash orders: claim 0) */
+        return;
+      }
+
+      var item = {
+        o: o, split: split, received: received,
+        remaining: Math.max(0, split.page_claim - received),
+        mismatch: null
+      };
+      if (!eligible && withAlloc[o.id]) {
+        item.mismatch = 'ineligible';
+      } else if (received > split.page_claim) {
+        item.mismatch = 'over';
+      }
+      if (item.mismatch) book.mismatches.push(item);
+
+      if (eligible && split.page_claim > 0) {
+        book.invoices.push(item);
+        book.totalClaim += split.page_claim;
+        book.totalReceived += received;
+        book.remaining += item.remaining;
+      }
+    });
+    book.invoices.sort(function (a, b) {
+      return new Date(a.o.created_at) - new Date(b.o.created_at);
+    });
+    return book;
+  }
+
+  function claimsReceiptLive(receiptId) {
+    var cl = App.claims || { receipts: [] };
+    for (var i = 0; i < cl.receipts.length; i++) {
+      if (cl.receipts[i].id === receiptId) return !cl.receipts[i].voided_at;
+    }
+    return false;
+  }
+
+  /* the receipts recorded against one order, newest first */
+  function claimsReceiptsFor(orderId) {
+    var cl = App.claims || { receipts: [], allocations: [] };
+    var out = [];
+    cl.receipts.forEach(function (r) {
+      cl.allocations.forEach(function (a) {
+        if (a.receipt_id === r.id && a.order_id === orderId) {
+          out.push({ r: r, amount: Number(a.amount) || 0 });
+        }
+      });
+    });
+    out.sort(function (a, b) { return new Date(b.r.created_at) - new Date(a.r.created_at); });
+    return out;
+  }
+
+  /* client-side mirror of the RPC's automatic FIFO allocation (preview only;
+     the server re-validates and is the single source of truth) */
+  function claimsAutoAlloc(amount) {
+    var plan = [], left = amount;
+    var candidates = App.orders.filter(function (o) {
+      return claimEligible(o) && Calc.pageSplit(o).page_claim > 0;
+    }).sort(function (a, b) {
+      return new Date(a.created_at) - new Date(b.created_at);
+    });
+    for (var i = 0; i < candidates.length && left > 0; i++) {
+      var o = candidates[i];
+      var split = Calc.pageSplit(o);
+      var remaining = Math.max(0, split.page_claim - claimsReceivedFor(o.id));
+      if (remaining <= 0) continue;
+      var take = Math.min(left, remaining);
+      plan.push({ o: o, amount: take, remainingAfter: remaining - take });
+      left -= take;
+    }
+    return left > 0 ? null : plan;   /* null = amount above the total remaining */
+  }
+
+  function claimsCard() {
+    var book = claimsBook();
+    var canWrite = canWriteClaims();
+
+    var card = el('div', { class: 'card pad-lg', id: 'claims-card' });
+    var head = el('div', { class: 'card-title' },
+      el('h3', { text: 'طلب پیج از مغازه' }),
+      el('span', { class: 'pill brand', text: UI.toFaDigits(book.invoices.length) + ' فاکتور' }));
+    if (canWrite) {
+      head.appendChild(el('button', {
+        class: 'btn small primary', type: 'button', text: 'ثبت دریافتی از مغازه',
+        onclick: function () { openRecordReceipt(null); }
+      }));
+    }
+    card.appendChild(head);
+    card.appendChild(el('p', { class: 'hint', style: 'margin-top:-4px',
+      text: 'سهم پیج داخل پولِ اسنپ‌پی که به حساب مغازه واریز شده است' }));
+
+    var stats = el('div', { class: 'grid three', style: 'margin-bottom:8px' },
+      el('div', { class: 'stat' },
+        el('span', { class: 'label', text: 'جمع طلب' }),
+        el('span', { class: 'value', text: UI.fmtMoney(book.totalClaim) + ' تومان' })),
+      el('div', { class: 'stat ok' },
+        el('span', { class: 'label', text: 'دریافت‌شده' }),
+        el('span', { class: 'value', text: UI.fmtMoney(book.totalReceived) + ' تومان' })),
+      el('div', { class: 'stat accent' },
+        el('span', { class: 'label', text: 'مانده' }),
+        el('span', { class: 'value', text: UI.fmtMoney(book.remaining) + ' تومان' })));
+    card.appendChild(stats);
+    if (book.pendingSnapp > 0) {
+      card.appendChild(el('p', { class: 'hint', style: 'margin:-2px 0 8px',
+        text: 'در انتظار واریز اسنپ‌پی به مغازه (هنوز قابل مطالبه نیست): ' +
+              UI.fmtMoney(book.pendingSnapp) + ' تومان' }));
+    }
+
+    /* ---- invoice list (the "which invoice is it about" requirement) ---- */
+    var tabs = [
+      { v: 'open', label: 'مانده‌دار' },
+      { v: 'done', label: 'تسویه‌شده' },
+      { v: 'all', label: 'همه' }
+    ];
+    var tabBar = el('div', { class: 'range-btns', style: 'margin-bottom:8px' });
+    tabs.forEach(function (t) {
+      tabBar.appendChild(el('button', {
+        class: 'btn small' + (claimsFilter === t.v ? ' active' : ''), type: 'button', text: t.label,
+        onclick: function () { claimsFilter = t.v; accounts.refresh(); }
+      }));
+    });
+    card.appendChild(tabBar);
+
+    var rows = book.invoices.filter(function (it) {
+      if (claimsFilter === 'open') return it.remaining > 0;
+      if (claimsFilter === 'done') return it.received >= it.split.page_claim;
+      return true;
+    });
+    if (!rows.length) {
+      card.appendChild(el('p', { class: 'hint',
+        text: claimsFilter === 'open' ? 'مانده‌ای برای وصول نیست ✓' : 'فاکتوری برای نمایش نیست' }));
+    } else {
+      var list = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+      rows.forEach(function (it) { list.appendChild(claimsInvoiceRow(it, canWrite)); });
+      card.appendChild(list);
+    }
+
+    /* ---- receipts history ---- */
+    var receipts = (App.claims ? App.claims.receipts : []).slice()
+      .sort(function (a, b) {
+        return new Date(b.received_on + 'T00:00:00') - new Date(a.received_on + 'T00:00:00') ||
+               new Date(b.created_at) - new Date(a.created_at);
+      });
+    card.appendChild(el('p', { class: 'hint', style: 'margin:14px 0 6px;font-weight:700;color:var(--text)',
+      text: 'دریافتی‌ها (' + UI.toFaDigits(receipts.length) + ')' }));
+    if (!receipts.length) {
+      card.appendChild(el('p', { class: 'hint', text: 'هنوز دریافتی ثبت نشده است' }));
+    } else {
+      var rlist = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+      receipts.forEach(function (r) { rlist.appendChild(claimsReceiptRow(r, canWrite)); });
+      card.appendChild(rlist);
+    }
+
+    /* ---- mismatches ---- */
+    if (book.mismatches.length) {
+      card.appendChild(el('p', { class: 'hint', style: 'margin:14px 0 6px;font-weight:700;color:var(--danger)',
+        text: 'نیاز به بررسی (' + UI.toFaDigits(book.mismatches.length) + ')' }));
+      var mlist = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+      book.mismatches.forEach(function (it) {
+        mlist.appendChild(el('div', { class: 'line-item' },
+          el('div', { class: 'grow' },
+            el('div', { class: 'name', text: it.o.customer }),
+            el('div', { class: 'meta', text: UI.fmtDateTime(it.o.created_at) }),
+            el('div', { class: 'meta', text: it.mismatch === 'over'
+              ? 'دریافتی ثبت‌شده (' + UI.fmtMoney(it.received) + ' تومان) از طلب فعلی (' +
+                UI.fmtMoney(it.split.page_claim) + ' تومان) بیشتر است؛ احتمالاً سفارش بعداً ویرایش شده است'
+              : 'این سفارش دیگر قابل مطالبه نیست ولی دریافتیِ ثبت‌شده دارد' })),
+          el('span', { class: 'pill danger', text: 'مغایرت' })));
+      });
+      card.appendChild(mlist);
+    }
+    return card;
+  }
+
+  function claimsInvoiceRow(it, canWrite) {
+    var o = it.o, split = it.split;
+    var open = !!claimsExpanded[o.id];
+    var pct = split.page_claim > 0
+      ? Math.min(100, Math.round(it.received / split.page_claim * 100)) : 0;
+
+    var row = el('div', { class: 'line-item claim-row' },
+      el('div', { class: 'grow' },
+        el('div', { class: 'name' },
+          el('span', { text: o.customer }),
+          el('span', { class: 'pill muted', style: 'margin-inline-start:6px', text: UI.statusLabel(o.status) }),
+          it.mismatch ? el('span', { class: 'pill danger', style: 'margin-inline-start:6px', text: 'مغایرت' }) : null),
+        el('div', { class: 'meta', text: UI.fmtDateTime(o.created_at) + ' · ' +
+          UI.methodLabel(o.method) + ' · ارسال: ' +
+          UI.shippingPaymentLabel(Calc.shippingPaymentMethod(o)) }),
+        el('div', { class: 'meta', text:
+          'طلب ' + UI.fmtMoney(split.page_claim) + ' · دریافت‌شده ' + UI.fmtMoney(it.received) +
+          ' · مانده ' + UI.fmtMoney(it.remaining) + ' تومان' }),
+        el('div', { class: 'bar-row' },
+          el('div', { class: 'bar-track', style: 'height:6px;margin-top:4px' },
+            el('div', { class: 'bar-fill', style: 'width:' + pct + '%' })))),
+      el('span', { class: 'row-actions' },
+        canWrite && it.remaining > 0 ? el('button', {
+          class: 'btn tiny primary', type: 'button', text: 'دریافت…',
+          onclick: function () { openRecordReceipt({ order_id: o.id }); }
+        }) : null,
+        el('button', {
+          class: 'btn tiny', type: 'button', text: open ? 'بستن جزئیات' : 'جزئیات',
+          onclick: function () {
+            claimsExpanded[o.id] = !open;
+            accounts.refresh();
+          }
+        })));
+
+    if (open) {
+      row.appendChild(claimsInvoiceDetails(it));
+    }
+    return row;
+  }
+
+  function claimsInvoiceDetails(it) {
+    var o = it.o, split = it.split;
+    var net = (o.owe - Number(o.shipping_fee || 0)) + o.h_share;
+    var box = el('div', { class: 'claim-details', style: 'width:100%;background:var(--surface-2);border-radius:8px;padding:8px 10px;margin-top:6px' });
+
+    box.appendChild(el('p', { class: 'hint', style: 'font-weight:700;margin:0 0 4px', text: 'کالاها' }));
+    (o.items || []).forEach(function (x) {
+      box.appendChild(el('div', { class: 'meta', text: x.name + ' × ' + UI.toFaDigits(x.qty) +
+        ' — سود پیج: ' + UI.fmtMoney((Number(x.hp) || 0) * (Number(x.qty) || 0)) + ' تومان' }));
+    });
+
+    if (split.page_claim > 0) {
+      box.appendChild(el('p', { class: 'hint', style: 'font-weight:700;margin:8px 0 4px', text: 'محاسبه طلب' }));
+      box.appendChild(el('div', { class: 'meta', text: 'کالای پرداخت‌شده با اسنپ‌پی (واریزی به مغازه): ' + UI.fmtMoney(split.goods_snapp) + ' تومان' }));
+      box.appendChild(el('div', { class: 'meta', text: 'ارزش کالاهای فاکتور پس از تخفیف: ' + UI.fmtMoney(net) + ' تومان' }));
+      box.appendChild(el('div', { class: 'meta', text: 'سهم پیج: ' + UI.fmtMoney(o.h_share) + ' تومان' }));
+      box.appendChild(el('div', { class: 'meta', text: 'طلب = سهم پیج × اسنپ‌پی کالا ÷ ارزش کالا = ' + UI.fmtMoney(split.page_claim) + ' تومان' }));
+    }
+
+    var recs = claimsReceiptsFor(o.id);
+    box.appendChild(el('p', { class: 'hint', style: 'font-weight:700;margin:8px 0 4px', text: 'دریافتی‌های این فاکتور' }));
+    if (!recs.length) {
+      box.appendChild(el('p', { class: 'hint', style: 'margin:0', text: 'هیچ دریافتی ثبت نشده است' }));
+    } else {
+      recs.forEach(function (x) {
+        box.appendChild(el('div', { class: 'meta', style: x.r.voided_at ? 'text-decoration:line-through;opacity:.6' : '',
+          text: UI.fmtDate(x.r.received_on) + ' — ' + UI.fmtMoney(x.amount) + ' تومان' +
+                (x.r.note ? ' · ' + x.r.note : '') + ' · #' + String(x.r.id).slice(0, 8) +
+                (x.r.voided_at ? ' · ابطال‌شده' : '') }));
+      });
+    }
+    return box;
+  }
+
+  function claimsReceiptRow(r, canWrite) {
+    var cl = App.claims || { allocations: [] };
+    var voided = !!r.voided_at;
+    var allocs = cl.allocations.filter(function (a) { return a.receipt_id === r.id; });
+    var style = voided ? 'opacity:.55' : '';
+    var row = el('div', { class: 'line-item', style: style },
+      el('div', { class: 'grow' },
+        el('div', { class: 'name' },
+          el('span', { text: UI.fmtMoney(r.amount) + ' تومان' }),
+          voided ? el('span', { class: 'pill danger', style: 'margin-inline-start:6px', text: 'ابطال‌شده' }) : null),
+        el('div', { class: 'meta', text: UI.fmtDate(r.received_on) + ' · #' + String(r.id).slice(0, 8) +
+          (r.note ? ' · ' + r.note : '') }),
+        el('div', { class: 'meta', text: allocs.length
+          ? 'فاکتورها: ' + allocs.map(function (a) {
+              return a.customer + ' · ' + UI.fmtDate(a.order_created_at) + ' · ' + UI.fmtMoney(a.amount);
+            }).join(' | ')
+          : 'بدون تخصیص' })),
+      el('span', { class: 'row-actions' },
+        canWrite && !voided ? el('button', {
+          class: 'btn tiny danger-outline', type: 'button', text: 'ابطال',
+          onclick: function () {
+            UI.confirm('این دریافتی به مبلغ ' + UI.fmtMoney(r.amount) +
+              ' تومان ابطال شود؟ ماندهٔ فاکتورها برمی‌گردد و سابقه باعتبر «ابطال‌شده» می‌ماند.',
+              { title: 'ابطال دریافتی', okLabel: 'ابطال', danger: true })
+              .then(function (yes) {
+                if (!yes) return;
+                UI.withBusy(row.querySelector('.btn'), async function () {
+                  try {
+                    await DB.voidPageClaimReceipt(r.id, null);
+                    UI.toast('دریافتی ابطال شد', 'ok', 1800);
+                    await Promise.all([DB.loadOrders(), DB.loadClaims()]);
+                    accounts.refresh();
+                    repaintOrders();
+                    if (window.App$ && App$.refresh) App$.refresh(false);
+                  } catch (e) { showErr(e); throw e; }
+                });
+              });
+          }
+        }) : null));
+    return row;
+  }
+
+  /* the «ثبت دریافتی از مغازه» dialog.
+     preset: { order_id } -> manual mode with that invoice preselected. */
+  function openRecordReceipt(preset) {
+    if (!canWriteClaims()) { UI.toast('فقط پیج یا ادمین می‌تواند دریافتی ثبت کند', 'warn'); return; }
+    var book = claimsBook();
+    var open = book.invoices.filter(function (it) { return it.remaining > 0; });
+    if (!open.length) { UI.toast('مانده‌ای برای وصول نیست', 'warn'); return; }
+
+    var manual = !!(preset && preset.order_id);
+    var fAmount = el('input', { type: 'text', inputmode: 'numeric', placeholder: 'مثلاً ۵۰۰٬۰۰۰' });
+    var fDate = el('input', { type: 'date', value: UI.toLocalInputDate(new Date()), max: UI.toLocalInputDate(new Date()) });
+    var fNote = el('input', { type: 'text', placeholder: 'اختیاری — مثلاً «قسط اول»' });
+    var modeSeg = segmented('claim-mode', [
+      { value: 'auto', label: 'خودکار — قدیمی‌ترین فاکتورها اول' },
+      { value: 'manual', label: 'انتخاب دستی فاکتورها' }
+    ], manual ? 'manual' : 'auto');
+
+    var totalRemaining = open.reduce(function (s, it) { return s + it.remaining; }, 0);
+    var errBox = el('p', { class: 'hint', style: 'color:var(--danger);margin:4px 0' });
+    var previewBox = el('div', {});
+    var manualBox = el('div', { style: 'display:none' });
+    var manualInputs = {};   /* order_id -> input */
+
+    open.forEach(function (it) {
+      var inp = el('input', {
+        type: 'text', inputmode: 'numeric', style: 'width:110px',
+        value: preset && preset.order_id === it.o.id ? String(it.remaining) : '',
+        'aria-label': 'مبلغ تخصیص به ' + it.o.customer
+      });
+      manualInputs[it.o.id] = inp;
+      var allBtn = el('button', {
+        class: 'btn tiny', type: 'button', text: 'همه',
+        onclick: function () { inp.value = String(it.remaining); paint(); }
+      });
+      manualBox.appendChild(el('div', { class: 'row wrap', style: 'align-items:center;gap:6px;margin-bottom:4px' },
+        el('span', { class: 'grow', text: it.o.customer + ' — مانده ' + UI.fmtMoney(it.remaining) }),
+        inp, allBtn));
+    });
+
+    function readAmount() {
+      try { return { v: Calc.parseMoney(fAmount.value, 'مبلغ باید عددی مثبت و صحیح باشد') }; }
+      catch (e) { return { err: e.message }; }
+    }
+    function sumManual() {
+      var sum = 0, allocs = [], over = false;
+      open.forEach(function (it) {
+        var raw = manualInputs[it.o.id].value;
+        if (!raw || !raw.trim()) return;
+        var v;
+        try { v = Calc.parseMoney(raw, ''); } catch (e) { v = -1; }
+        if (v < 0) { over = true; return; }
+        if (v > it.remaining) over = true;
+        sum += v;
+        if (v > 0) allocs.push({ order_id: it.o.id, amount: v });
+      });
+      return { sum: sum, allocs: allocs, over: over };
+    }
+
+    function paint() {
+      errBox.textContent = '';
+      var isManual = radioValue('claim-mode') === 'manual';
+      previewBox.style.display = isManual ? 'none' : '';
+      manualBox.style.display = isManual ? '' : 'none';
+
+      var btn = document.querySelector('#modal-root .modal-actions .btn.primary');
+      var amt = readAmount();
+      if (amt.err) {
+        errBox.textContent = amt.err;
+        if (btn) btn.disabled = true;
+        return;
+      }
+      if (isManual) {
+        var m = sumManual();
+        previewBox.innerHTML = '';
+        previewBox.appendChild(el('p', { class: 'hint', style: 'margin:2px 0',
+          text: 'تخصیص‌یافته: ' + UI.fmtMoney(m.sum) + ' / مبلغ دریافتی: ' + UI.fmtMoney(amt.v) +
+                ' / باقی‌مانده برای تخصیص: ' + UI.fmtMoney(Math.max(0, amt.v - m.sum)) + ' تومان' }));
+        if (m.over) errBox.textContent = 'مبلغ یک فاکتور نمی‌تواند منفی یا از ماندهٔ آن بیشتر باشد';
+        if (btn) btn.disabled = m.over || m.sum !== amt.v;
+        return;
+      }
+      /* auto preview */
+      var plan = claimsAutoAlloc(amt.v);
+      previewBox.innerHTML = '';
+      if (!plan) {
+        errBox.textContent = 'مبلغ بیش از جمع ماندهٔ طلب‌هاست؛ حداکثر ' + UI.fmtMoney(totalRemaining) + ' تومان';
+        if (btn) btn.disabled = true;
+        return;
+      }
+      var tbl = el('table', { class: 'data' });
+      tbl.appendChild(el('thead', {}, el('tr', {},
+        el('th', { text: 'مشتری' }), el('th', { text: 'تاریخ' }),
+        el('th', { text: 'مبلغ تخصیص' }), el('th', { text: 'مانده بعد' }))));
+      var tb = el('tbody', {});
+      plan.forEach(function (p) {
+        tb.appendChild(el('tr', {},
+          el('td', { text: p.o.customer }),
+          el('td', { text: UI.fmtDateTime(p.o.created_at) }),
+          el('td', { text: UI.fmtMoney(p.amount) }),
+          el('td', { text: UI.fmtMoney(p.remainingAfter) })));
+      });
+      tbl.appendChild(tb);
+      previewBox.appendChild(el('p', { class: 'hint', style: 'margin:2px 0',
+        text: 'این مبلغ به این فاکتورها تخصیص داده می‌شود:' }));
+      previewBox.appendChild(tbl);
+      if (btn) btn.disabled = false;
+    }
+
+    modeSeg.addEventListener('change', paint);
+    [fAmount, fDate, fNote].forEach(function (inp) { inp.addEventListener('input', paint); });
+    manualBox.addEventListener('input', paint);
+
+    var body = el('div', { class: 'field' },
+      el('div', { class: 'field' }, el('label', { text: 'مبلغ دریافتی (تومان)' }), fAmount),
+      el('div', { class: 'field' }, el('label', { text: 'تاریخ دریافت' }), fDate),
+      el('div', { class: 'field' }, el('label', { text: 'یادداشت' }), fNote),
+      el('div', { class: 'field' }, el('label', { text: 'نحوهٔ تخصیص' }), modeSeg),
+      el('p', { class: 'hint', style: 'margin:2px 0',
+        text: 'جمع ماندهٔ فعلی: ' + UI.fmtMoney(totalRemaining) + ' تومان' }),
+      previewBox, manualBox, errBox);
+    /* keep the two preview boxes outside the outer .field wrapper */
+    var wrap = el('div', {}, body, el('div', {}));
+
+    UI.modal({
+      title: 'ثبت دریافتی از مغازه',
+      body: wrap,
+      actions: [
+        { label: 'انصراف', value: null },
+        { label: 'ثبت دریافتی', value: '__ok__', primary: true }
+      ]
+    }).then(function (v) {
+      if (v !== '__ok__') return;
+      var amount = readAmount();
+      if (amount.err || amount.v <= 0) { UI.toast('مبلغ دریافتی نامعتبر است', 'warn'); return; }
+      var dateVal = fDate.value;
+      if (!dateVal) { UI.toast('تاریخ دریافت اجباری است', 'warn'); return; }
+      if (dateVal > UI.toLocalInputDate(new Date())) { UI.toast('تاریخ دریافت نمی‌تواند در آینده باشد', 'warn'); return; }
+      var isManual = radioValue('claim-mode') === 'manual';
+      var allocs = null;
+      if (isManual) {
+        var m = sumManual();
+        if (m.over || m.sum !== amount.v) { UI.toast('جمع تخصیص‌ها باید دقیقاً برابر مبلغ دریافتی باشد', 'warn'); return; }
+        allocs = m.allocs;
+      } else if (amount.v > totalRemaining) {
+        UI.toast('مبلغ بیش از جمع ماندهٔ طلب‌هاست؛ حداکثر ' + UI.fmtMoney(totalRemaining) + ' تومان', 'warn');
+        return;
+      }
+      UI.withBusy(document.querySelector('#modal-root .modal-actions .btn.primary'), async function () {
+        try {
+          await DB.recordPageClaimReceipt(amount.v, dateVal, fNote.value.trim() || null, allocs);
+          UI.toast('دریافتی ثبت شد', 'ok');
+          await Promise.all([DB.loadOrders(), DB.loadClaims()]);
+          accounts.refresh();
+          repaintOrders();
+          if (window.App$ && App$.refresh) App$.refresh(false);
+        } catch (e) { showErr(e); throw e; }
+      }).catch(function () { /* message shown */ });
+    });
+
+    paint();
+  }
 
   /* --------------------------------------------------------- accounts bits */
   /* section 5.11: selections live outside the render, so a live refresh
@@ -2768,8 +3353,9 @@ var Screens = (function () {
       if (box) rowBoxes.push(box);
 
       var age = daysSince(o.created_at);
-      var money = UI.money(cfg.kind === 'snapp' ? Calc.snappDeposit(o)
-        : (cfg.kind === 'owed' ? o.owe : o.total));
+      var money = UI.money(cfg.rowValue ? cfg.rowValue(o)
+        : (cfg.kind === 'snapp' ? Calc.snappDeposit(o)
+          : (cfg.kind === 'owed' ? o.owe : o.total)));
       var metaText = UI.fmtDateTime(o.created_at) + ' · ' + money;
       var split = Calc.orderSplit(o);
       var pills = el('span', { class: 'row-pills' });
@@ -2830,6 +3416,34 @@ var Screens = (function () {
 
     card.appendChild(listWrap);
 
+    /* optional sub-list under its own small heading (e.g. paid orders with
+       page_debt === 0: nothing owed, but they must reach `settled` before
+       the shop can ship) */
+    if (cfg.sub) {
+      card.appendChild(el('p', { class: 'hint', style: 'margin:14px 0 6px;font-weight:700;color:var(--text)',
+        text: cfg.sub.title + ' (' + UI.toFaDigits(cfg.sub.rows.length) + ')' }));
+      if (cfg.sub.hint) {
+        card.appendChild(el('p', { class: 'hint', style: 'margin:-2px 0 6px', text: cfg.sub.hint }));
+      }
+      if (!cfg.sub.rows.length) {
+        card.appendChild(el('p', { class: 'hint', text: 'موردی نیست ✓' }));
+      } else {
+        var subWrap = el('div', { style: 'display:flex;flex-direction:column;gap:6px' });
+        cfg.sub.rows.forEach(function (o) {
+          subWrap.appendChild(el('div', { class: 'line-item' },
+            el('div', { class: 'grow' },
+              el('div', { class: 'name', text: o.customer }),
+              el('div', { class: 'meta', text: UI.fmtDateTime(o.created_at) + ' · ' + UI.money(o.total) })),
+            el('span', { class: 'row-actions' },
+              el('button', {
+                class: 'btn tiny', type: 'button', text: cfg.sub.rowLabel || 'آماده ارسال',
+                onclick: function () { singleAction(cfg, o); }
+              }))));
+        });
+        card.appendChild(subWrap);
+      }
+    }
+
     if (cfg.bulkLabel) {
       var bulkBtn = el('button', {
         class: 'btn primary block', type: 'button', style: 'margin-top:12px',
@@ -2840,7 +3454,7 @@ var Screens = (function () {
           if (!ids.length) { UI.toast('حداقل یک سفارش را انتخاب کنید', 'warn'); return; }
           var yes = await UI.confirm(
             UI.toFaDigits(ids.length) + ' سفارش به‌عنوان «' +
-            (cfg.bulkTarget === 'settled' ? 'تسویه‌شده' : 'دریافت‌شده') + '» ثبت شود؟',
+            (cfg.doneLabel || (cfg.bulkTarget === 'settled' ? 'تسویه‌شده' : 'دریافت‌شده')) + '» ثبت شود؟',
             { title: cfg.title, okLabel: 'ثبت' });
           if (!yes) return;
           await UI.withBusy(bulkBtn, async function () {
@@ -3025,7 +3639,7 @@ var Screens = (function () {
         statCard('تعداد سفارش', UI.toFaDigits(rows.length), ''),
         statCard('فروش کل', UI.fmtMoney(total) + ' تومان', 'accent'),
         statCard('سهم پیج', UI.fmtMoney(pageShare) + ' تومان', 'ok'),
-        statCard('پرداختی به مغازه', UI.fmtMoney(oweSum) + ' تومان', 'accent')
+        statCard('سهم مغازه', UI.fmtMoney(oweSum) + ' تومان', 'accent')
       ));
 
       /* split by channel (a mixed order funds both sides) */

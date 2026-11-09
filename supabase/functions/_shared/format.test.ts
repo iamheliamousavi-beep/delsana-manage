@@ -119,7 +119,7 @@ Deno.test('12.4 channel message builder', () => {
 /* ------------------------------------------------------- 12.5) invoice DM 8.3 */
 Deno.test('12.5 invoice DM builder', () => {
   const text = buildInvoice(order);
-  includes(text, 'به مغازه: ۶۹۰٬۰۰۰', 'the invoice carries the amount owed to the shop');
+  includes(text, 'سهم مغازه: ۶۹۰٬۰۰۰', 'the invoice carries the shop entitlement');
   includes(text, 'سهم پیج: ۱۵۰٬۰۰۰', 'the invoice carries the page share');
   includes(text, '💰 مبلغ کل مشتری: ۸۴۰٬۰۰۰ تومان', 'the customer total');
   includes(text, '🚚 کد رهگیری: POST-123', 'the tracking line');
@@ -139,7 +139,7 @@ Deno.test('12.5 invoice DM builder', () => {
   includes(snapp, '💳 پرداخت کالا — اسنپ‌پی: ۷۵۰٬۰۰۰ تومان', 'snapp goods payment label');
   includes(snapp, '🚚 پرداخت ارسال — اسنپ‌پی: ۱۹۰٬۰۰۰ تومان', 'old snapp rows pay shipping through Snapp');
   includes(snapp, 'دریافتی اسنپ‌پی: ۹۴۰٬۰۰۰ تومان', 'the whole customer total arrived through Snapp');
-  includes(snapp, 'واریزی اسنپ‌پی: ۸۴۰٬۰۰۰ تومان', 'the snapp settlement line');
+  includes(snapp, 'واریزی اسنپ‌پی (به مغازه): ۸۴۰٬۰۰۰ تومان', 'the snapp settlement line');
 
   const split = buildInvoice({
     ...order, method: 'snapp', shipping_payment_method: 'cash',
@@ -150,7 +150,7 @@ Deno.test('12.5 invoice DM builder', () => {
   includes(split, '🚚 پرداخت ارسال — نقدی / کارت: ۱۹۰٬۰۰۰ تومان', 'shipping cash line');
   includes(split, 'دریافتی اسنپ‌پی: ۷۵۰٬۰۰۰ تومان', 'only the goods part is counted as Snapp');
   includes(split, 'دریافتی نقدی / کارت: ۱۹۰٬۰۰۰ تومان', 'only the shipping part is counted as cash');
-  includes(split, 'واریزی اسنپ‌پی: ۶۵۰٬۰۰۰ تومان', 'the Snapp deposit excludes the cash shipping');
+  includes(split, 'واریزی اسنپ‌پی (به مغازه): ۶۵۰٬۰۰۰ تومان', 'the Snapp deposit excludes the cash shipping');
 
   const discounted = buildInvoice({ ...order, discount: 50000, discount_bearer: 'split' });
   includes(discounted, '🏷 تخفیف: ۵۰٬۰۰۰ (بر عهده نصف‌نصف)', 'the discount line with its bearer');
@@ -175,7 +175,7 @@ Deno.test('12.5 invoice DM builder', () => {
   includes(mixed, 'اسنپ‌پی کالا (مشتری): ۳۲۵٬۰۰۰ تومان', 'the customer Snapp part line');
   includes(mixed, 'نقدی / کارت کالا (مشتری، شامل کارمزد اسنپ‌پی ۵۰٬۰۰۰): ۳۷۵٬۰۰۰ تومان', 'the customer cash part line with fee');
   includes(mixed, '💰 مبلغ کل مشتری: ۸۹۰٬۰۰۰ تومان', 'the mixed customer total');
-  includes(mixed, 'واریزی اسنپ‌پی: ۲۷۵٬۰۰۰ تومان', 'the mixed settlement line');
+  includes(mixed, 'واریزی اسنپ‌پی (به مغازه): ۲۷۵٬۰۰۰ تومان', 'the mixed settlement line');
 
   /* v5 rows (migration 012): the fee was collected inside the Snapp amount */
   const mixedV5 = buildInvoice({
@@ -193,7 +193,7 @@ Deno.test('12.5 invoice DM builder', () => {
   includes(mixedV5, 'اسنپ‌پی کالا (مشتری، شامل کارمزد اسنپ‌پی ۷۰۰٬۰۰۰): ۶٬۱۰۰٬۰۰۰ تومان', 'the v5 Snapp line with the fee inside');
   includes(mixedV5, 'نقدی / کارت کالا (مشتری): ۱۰۰٬۰۰۰ تومان', 'the v5 cash line without the fee');
   includes(mixedV5, '💰 مبلغ کل مشتری: ۶٬۲۰۰٬۰۰۰ تومان', 'the v5 customer total');
-  includes(mixedV5, 'واریزی اسنپ‌پی: ۵٬۴۰۰٬۰۰۰ تومان', 'the v5 settlement line');
+  includes(mixedV5, 'واریزی اسنپ‌پی (به مغازه): ۵٬۴۰۰٬۰۰۰ تومان', 'the v5 settlement line');
   excludes(mixedV5, 'نقدی / کارت کالا (مشتری، شامل کارمزد', 'no legacy fee-in-cash label on a v5 row');
 
   const cashText = buildInvoice(order);
