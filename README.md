@@ -261,8 +261,13 @@ the buttons, and calling the RPCs as them fails with «دسترسی غیرمجا
   (a second restore fails). Deletion is otherwise **permanent**.
 - **Notifications:** `order_edited` («✏️ فاکتور … توسط ادمین ویرایش شد» + changed fields, max 6),
   `order_deleted` («🗑 سفارش … توسط ادمین حذف شد», channel post edited from the payload) and
-  `product_deleted` («🗑 محصول … حذف شد»). Recipients: all linked partners except the actor;
-  test mode («حالت تست») is respected. Push texts stay lock-screen safe (names only, no amounts).
+  `product_deleted` («🗑 محصول … حذف شد»). Recipients: all linked partners except the actor —
+  with one exception (8.1): **a new invoice (`order_created`) is also sent to its creator**,
+  so it reaches every linked user (creator, other partner and admin; an admin «بازگردانی» of a
+  deleted order re-emits `order_created`, so the restoring admin gets the invoice DM too).
+  All other events still skip the actor, and Web Push always skips the actor.
+  Test mode («حالت تست») is respected for all of them, including the creator's self-copy.
+  Push texts stay lock-screen safe (names only, no amounts).
 
 ### 8.1 Importing a post-office list («ایمپورت لیست پست»)
 
@@ -372,7 +377,9 @@ manifest.
 
 Every change to an order or a product is written to the `outbox` table **by the database**
 (triggers created in `migrations/003_notifications.sql`), and the `notify` Edge Function wakes up,
-claims a batch atomically (`claim_outbox`), and sends: a Telegram DM to the *other* partner, one
+claims a batch atomically (`claim_outbox`), and sends: a Telegram DM to the *other* partner (8.1:
+a new invoice `order_created` also goes to its creator — every other event still skips the actor,
+and Web Push always skips the actor), one
 message per order in the private channel (created once, **edited** when the tracking code changes
 or the order is cancelled), plus Web Push (see §9.5, phase 7).
 
@@ -558,7 +565,7 @@ Notes:
 | Where | What |
 |-------|------|
 | `tests.html` in a browser | Money examples, rounding regressions, number parsing, post-list import fixtures, mixed payment (OWNER/M1–M9, error cases, 5,000-combo sweep, parity loop, `snappDeposit`, input parsing, reports identity), the admin client section ۶ (line-list totals, typed-«حذف» rule, snapshot override) and the `pageSplit` section ۷ (T1–T10, shape parity, a seeded 500-combo sweep). |
-| `deno test supabase/functions/_shared/format.test.ts` | 9 checks: Jalali date, channel text, invoice (mixed lines with fee, «سهم مغازه», «واریزی اسنپ‌پی (به مغازه)»), merge rule, push payload, and the three admin events (`order_edited`, `order_deleted` + deleted channel text, `product_deleted`). |
+| `deno test supabase/functions/_shared/format.test.ts` | 12 checks: Jalali date, channel text, invoice (mixed lines with fee, «سهم مغازه», «واریزی اسنپ‌پی (به مغازه)»), merge rule, push payload, the three admin events (`order_edited`, `order_deleted` + deleted channel text, `product_deleted`) and the 8.1 recipient selection (`dmRecipients` / `pushRecipients`). |
 | `tests/mixed_payment.sql` in the SQL Editor | OWNER/M1–M9, all error cases, all 13 old examples and a 500-combo invariant sweep against `public.order_amounts` (no login needed; ends with `ALL PASSED`). |
 | `tests/admin_edit_delete.sql` in the SQL Editor | Admin RPCs on throw-away rows (rolled back): non-admin block on all 7 RPCs, delivered-order edit (2 cases + invariants), cash → mixed OWNER numbers, unknown-key rejection, delete (audit + `order_deleted` + pending processed), restore (same id, double-restore fails), product delete count + snapshots. Ends with `ALL PASSED`. |
 | `tests/page_claims.sql` in the SQL Editor | The «طلب پیج از مغازه» ledger (rolled back): role gate, ineligible orders, partial receipts, FIFO split over two invoices, manual validation (exact sum / over-allocation / duplicates), future date, void + idempotency, `admin_delete_order` guard + restore, over-received mismatch, no outbox events, RLS reads, and a 500-combo sweep asserting the SQL functions return exactly the JS values. Ends with `ALL PASSED`. |

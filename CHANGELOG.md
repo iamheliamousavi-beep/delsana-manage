@@ -1,3 +1,43 @@
+## notify / 2026-11 — Whoever creates an invoice also receives that invoice
+
+Business rule (8.1 exception): the creator of a new invoice also receives the
+same full-invoice Telegram DM, so the invoice reaches every linked user — the
+creator, the other partner and the admin. Everything else is unchanged: all
+other events still skip the actor, Web Push still never pushes the actor, the
+private channel post, test mode («حالت تست», including the self-copy) and the
+manual «فاکتور در تلگرام من» button (`send-invoice`) are untouched.
+
+1. Files changed and purpose
+
+- `supabase/functions/_shared/format.ts` — new shared `Profile` type plus the
+  pure, testable recipient selection: `dmRecipients(m, profiles)` returns ALL
+  profiles when the merged group contains `order_created`, otherwise the old
+  rule (no actor → everyone; otherwise everyone except the actors);
+  `pushRecipients(m, profiles)` is exactly the old `recipientsFor` behavior
+  (the actor is never pushed).
+- `supabase/functions/notify/index.ts` — `handleGroup` now iterates the DM
+  recipients for `deliverDm` and the push recipients for `deliverPush`
+  separately. The creator's self-copy is sent AFTER the partners' DMs and is
+  best-effort: a failure is only `console.error`-ed with the order id and is
+  NOT added to `problems`, so a group retry never re-sends the invoice to the
+  partners who already received it (partner delivery failures keep their old
+  retry behavior). Side effect (accepted): `admin_restore_order` re-emits
+  `order_created` with the restoring admin as actor, so the restoring admin
+  gets the invoice DM of the order they restored.
+- `supabase/functions/_shared/format.test.ts` — three new checks: the creator
+  is a DM recipient but never pushed (all three roles), merged groups with
+  one or two actors, every other event kind and actor-less events unchanged.
+- `README.md` (§8 notifications bullet, §10 intro, test table) — docs.
+
+2. Deploy
+
+    supabase functions deploy notify --no-verify-jwt
+
+Only the `notify` function must be redeployed: no migration, no frontend
+deploy, no service-worker change.
+
+---
+
 Delsana-managent v6/v7 / migration 013 — Change Report
 ==================================================
 

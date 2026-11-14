@@ -22,7 +22,7 @@ import {
 import { pushEnabled, PushError, sendPush, type Subscription } from '../_shared/push.ts';
 
 type Row = F.OutboxRow & { attempts: number; processed_at: string | null };
-type Profile = { user_id: string; role: 'mahdi' | 'helia' | 'admin' };
+type Profile = F.Profile;
 type OrderRow = F.Order & {
   tg_channel_msg_id: number | null;
   tg_channel_hash: string | null;
@@ -142,14 +142,11 @@ async function loadProfiles(admin: Admin): Promise<Profile[]> {
 }
 
 /**
- * 8.1: the actor is never notified. Product events reach every partner
- * except the actor (admin, page and store — migration 007); events
- * without an actor reach everyone.
+ * 8.1 recipient selection lives in `format.ts` next to `mergeEvents`:
+ * `F.dmRecipients` (the actor is skipped, EXCEPT the creator of an invoice,
+ * who also receives their own invoice) and `F.pushRecipients` (the actor is
+ * always skipped).
  */
-function recipientsFor(m: F.Merged, profiles: Profile[]): Profile[] {
-  if (m.actors.length === 0) return profiles;
-  return profiles.filter((p) => !m.actors.includes(p.user_id));
-}
 
 function actorRole(m: F.Merged, profiles: Profile[]): 'mahdi' | 'helia' | 'admin' | null {
   const actor = m.actors[0];
@@ -186,17 +183,45 @@ async function handleGroup(
   /* 1) Telegram DMs ------------------------------------------------- */
   const dm = await buildDm(admin, order, m, base);
   const role = actorRole(m, profiles);
-  for (const person of recipientsFor(m, profiles)) {
+  const dmPeople = F.dmRecipients(m, profiles);
+  const pushPeople = F.pushRecipients(m, profiles);
+
+  // partners first (a failure here still retries the whole group, as before)
+  for (const person of dmPeople) {
+    // the invoice creator is a DM recipient too, but their self-copy is
+    // sent last (best-effort) so it cannot add a retry for the others
+    if (m.actors.includes(person.user_id)) continue;
     try {
       await deliverDm(admin, person, dm);
     } catch (e) {
       problems.push(`dm ${person.role}: ${message(e)}`);
     }
-    if (pushEnabled()) {
+  }
+
+  // pushes, unchanged (8.1: the actor is never pushed)
+  if (pushEnabled()) {
+    for (const person of pushPeople) {
       try {
         await deliverPush(admin, person, order, m, base, role);
       } catch (e) {
         problems.push(`push ${person.role}: ${message(e)}`);
+      }
+    }
+  }
+
+  // self-copy: whoever created an invoice also receives it in their own
+  // Telegram. Sent AFTER the partners' DMs and best-effort — a failure is
+  // only logged (with the order id), never added to `problems`, so a retry
+  // of the group never re-sends the invoice to the partners who got it.
+  if (m.has('order_created')) {
+    for (const person of dmPeople) {
+      if (!m.actors.includes(person.user_id)) continue;
+      try {
+        await deliverDm(admin, person, dm);
+      } catch (e) {
+        console.error(
+          `self-copy order ${group[0].order_id ?? '?'} to ${person.role}: ${message(e)}`,
+        );
       }
     }
   }

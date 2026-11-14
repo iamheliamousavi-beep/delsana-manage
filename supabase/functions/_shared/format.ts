@@ -233,6 +233,31 @@ export function mergeEvents(rows: OutboxRow[]): Merged {
   };
 }
 
+/* ------------------------------------------------- recipients (8.1) ------ */
+/** Minimal profile shape shared with notify/index.ts. */
+export type Profile = { user_id: string; role: 'mahdi' | 'helia' | 'admin' };
+
+/**
+ * 8.1: the actor is never notified — with ONE exception: whoever CREATES an
+ * invoice also receives that same invoice in their own Telegram, so a new
+ * invoice reaches every linked user (creator, other partner, admin).
+ * Everything else still skips the actor; events without an actor (e.g. the
+ * tracking reminder) reach everyone.
+ *
+ * Web Push keeps the old rule regardless: an actor never gets a push for
+ * their own action ("you created an order" is noise — Telegram only).
+ */
+export function dmRecipients(m: Merged, profiles: Profile[]): Profile[] {
+  if (m.has('order_created')) return profiles;
+  return pushRecipients(m, profiles);
+}
+
+/** The old 8.1 rule, unchanged: the actor is never pushed. */
+export function pushRecipients(m: Merged, profiles: Profile[]): Profile[] {
+  if (m.actors.length === 0) return profiles;
+  return profiles.filter((p) => !m.actors.includes(p.user_id));
+}
+
 /* ------------------------------------------------- channel message (9.3) */
 export type ChannelAction = 'create' | 'edit' | 'skip';
 

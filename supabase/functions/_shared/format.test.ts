@@ -16,6 +16,7 @@ import {
   buildPush,
   buildTrackingMissingDm,
   channelAction,
+  dmRecipients,
   escapeHtml,
   faNum,
   jalaliDate,
@@ -24,6 +25,8 @@ import {
   money,
   type Order,
   type OutboxRow,
+  type Profile,
+  pushRecipients,
 } from './format.ts';
 
 /* ------------------------------------------------------------- tiny asserts */
@@ -386,4 +389,88 @@ Deno.test('8.4 push payload is lock-screen safe', () => {
   assertEquals(productPush.body, 'کالای نمونه', 'product push body');
   assertEquals(productPush.tag, 'product:p-1', 'product tag = product:<id>');
   assertEquals(productPush.url, 'https://example.app/?view=products', 'product deep link');
+});
+
+/* ------------------------------------------------ 8.1) DM / push recipients */
+const PROFILES: Profile[] = [
+  { user_id: 'user-m', role: 'mahdi' },
+  { user_id: 'user-h', role: 'helia' },
+  { user_id: 'user-a', role: 'admin' },
+];
+
+/** compare recipient sets by role, order-independent */
+function assertRecipients(actual: Profile[], expected: string[], label: string) {
+  assertEquals(
+    actual.map((p) => p.role).sort(),
+    [...expected].sort(),
+    label,
+  );
+}
+
+Deno.test('8.1 order_created: the creator is a DM recipient but never pushed', () => {
+  // Helia creates the invoice → Helia, Mahdi and admin each get the DM
+  const byHelia = mergeEvents([row('order_created', {}, 'user-h')]);
+  assertRecipients(dmRecipients(byHelia, PROFILES), ['mahdi', 'helia', 'admin'],
+    'the creator receives their own invoice DM');
+  assertRecipients(pushRecipients(byHelia, PROFILES), ['mahdi', 'admin'],
+    'the creator gets no push for their own action');
+
+  // Mahdi creates → DM {h, m, a}; push {h, a}
+  const byMahdi = mergeEvents([row('order_created', {}, 'user-m')]);
+  assertRecipients(dmRecipients(byMahdi, PROFILES), ['mahdi', 'helia', 'admin'],
+    'a store-created invoice also reaches its creator');
+  assertRecipients(pushRecipients(byMahdi, PROFILES), ['helia', 'admin'],
+    'push still skips the store actor');
+
+  // the admin creates → DM {h, m, a}; push {h, m}
+  const byAdmin = mergeEvents([row('order_created', {}, 'user-a')]);
+  assertRecipients(dmRecipients(byAdmin, PROFILES), ['mahdi', 'helia', 'admin'],
+    'an admin-created invoice also reaches the admin');
+  assertRecipients(pushRecipients(byAdmin, PROFILES), ['helia', 'mahdi'],
+    'push still skips the admin actor');
+});
+
+Deno.test('8.1 merged groups with order_created reach everyone', () => {
+  // one actor throughout (created + changed the status before notify ran)
+  const sameActor = mergeEvents([
+    row('order_created', {}, 'user-h'),
+    row('status_changed', { from: 'new', to: 'paid' }, 'user-h'),
+  ]);
+  assertRecipients(dmRecipients(sameActor, PROFILES), ['mahdi', 'helia', 'admin'],
+    'the creator keeps the invoice DM even when they also changed the status');
+
+  // two actors: A created the order, B changed the status
+  const twoActors = mergeEvents([
+    row('order_created', {}, 'user-h'),
+    row('status_changed', { from: 'new', to: 'paid' }, 'user-m'),
+  ]);
+  assertRecipients(dmRecipients(twoActors, PROFILES), ['mahdi', 'helia', 'admin'],
+    'a group with order_created notifies every linked user');
+});
+
+Deno.test('8.1 every other event still skips the actor (unchanged)', () => {
+  const cases: [string, Record<string, unknown>][] = [
+    ['status_changed', { from: 'new', to: 'paid' }],
+    ['tracking_changed', { from: '', to: 'POST-1' }],
+    ['pin_changed', { pinned: true }],
+    ['order_edited', { changed: ['مبلغ'] }],
+    ['order_deleted', { customer: 'مشتری تست' }],
+    ['prices_changed', { count: 2 }],
+    ['availability_changed', { name: 'کالای نمونه', available: false }],
+    ['product_deleted', { name: 'کالای نمونه' }],
+  ];
+  for (const [kind, payload] of cases) {
+    const m = mergeEvents([row(kind, payload, 'user-h')]);
+    assertRecipients(dmRecipients(m, PROFILES), ['mahdi', 'admin'],
+      `${kind}: DM still skips the actor`);
+    assertRecipients(pushRecipients(m, PROFILES), ['mahdi', 'admin'],
+      `${kind}: push still skips the actor`);
+  }
+
+  // no actor → everyone (e.g. the tracking reminder), unchanged
+  const noActor = mergeEvents([{ id: 2, kind: 'tracking_missing', order_id: null, actor: null, payload: {} }]);
+  assertRecipients(dmRecipients(noActor, PROFILES), ['mahdi', 'helia', 'admin'],
+    'an actor-less event reaches everyone');
+  assertRecipients(pushRecipients(noActor, PROFILES), ['mahdi', 'helia', 'admin'],
+    'an actor-less push reaches everyone');
 });
