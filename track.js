@@ -5,6 +5,8 @@
    no login, no libraries: one plain fetch POST to a single narrow RPC.
    Nothing about the entered phone/name is ever stored (no localStorage,
    no URL, no cookies, no analytics). All rendering through DOM APIs only.
+   The markup reuses the manager app's vocabulary (order-head/who/cust,
+   sum-rows, chips, pills) so the page belongs to the same product family.
    ========================================================================== */
 
 (function () {
@@ -245,19 +247,21 @@
 
     var card = el('article', { class: 'card track-order' });
 
-    var head = el('div', { class: 'track-order-head' },
-      el('div', {},
+    /* header: the manager's order-card vocabulary (.order-head/.who/.cust) */
+    var head = el('div', { class: 'order-head' },
+      el('div', { class: 'who' },
         el('span', { class: 'track-label', text: 'تاریخ ثبت' }),
-        el('div', { class: 'track-date', text: fmtDate(order.created_at) })),
+        el('div', { class: 'cust', text: fmtDate(order.created_at) })),
       statusPill(order.stage));
     card.appendChild(head);
 
+    /* items as the manager's dashed .sum-row rows */
     var items = el('div', { class: 'track-items' },
       el('span', { class: 'track-label', text: 'اقلام سفارش' }));
     (order.items || []).forEach(function (it) {
-      items.appendChild(el('div', { class: 'track-item' },
-        el('span', { class: 'track-item-name', text: it.name || '' }),
-        el('span', { class: 'track-qty', text: '× ' + toFaDigits(it.qty) })));
+      items.appendChild(el('div', { class: 'sum-row' },
+        el('span', { class: 'k', text: it.name || '' }),
+        el('span', { class: 'v', text: '× ' + toFaDigits(it.qty) })));
     });
     card.appendChild(items);
 
@@ -278,8 +282,9 @@
 
     if (data && data.status === 'ok') {
       var orders = data.orders || [];
-      results.appendChild(el('p', { class: 'track-count',
-        text: toFaDigits(orders.length) + ' سفارش پیدا شد' }));
+      results.appendChild(el('p', { class: 'track-count' },
+        el('span', { class: 'chip',
+                     text: toFaDigits(orders.length) + ' سفارش پیدا شد' })));
       orders.forEach(function (o) { results.appendChild(orderCard(o)); });
       return;
     }

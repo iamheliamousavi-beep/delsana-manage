@@ -1,74 +1,73 @@
 /* ==========================================================================
    track.css — page-specific layout for track.html (the public order
-   tracking page). Uses ONLY the existing style.css tokens/classes —
-   no new colors. Direction: hero-centric, calm hierarchy, soft depth,
-   200-300ms motion, visible focus, >=44px touch targets, and full
-   prefers-reduced-motion support. Works in light/dark and without the
-   web font (Tahoma fallback).
+   tracking page). Deliberately mirrors the MANAGER APP's design language
+   (style.css only — no new colors): the login screen's radial-glow
+   background and rounded elevated card, the order-card header vocabulary
+   (.order-head/.who/.cust/.sub), status pills, chips and dashed summary
+   rows. Plus: 200-300ms motion, visible focus, >=44px touch targets and
+   full prefers-reduced-motion support. Works in light/dark and without
+   the web font (Tahoma fallback).
    ========================================================================== */
+
+/* the login screen's glow background, on the public page */
+.track-page {
+  min-height: 100dvh;
+  background:
+    radial-gradient(52rem 52rem at 14% 12%, color-mix(in srgb, var(--brand-soft) 75%, transparent), transparent 60%),
+    radial-gradient(44rem 44rem at 88% 86%, color-mix(in srgb, var(--warn-soft) 60%, transparent), transparent 55%),
+    var(--bg);
+}
 
 .track-wrap {
   max-width: 520px;
   margin: 0 auto;
-  padding: 28px 16px 56px;
+  padding: 32px 16px 56px;
 }
 
-/* ----------------------------------------------------------------- hero */
-.track-hero { text-align: center; margin: 4px 0 22px; }
+/* ---------------------------------------------------------------- brand */
+/* same structure/sizes as .brand on the manager login screen */
+.track-brand { text-align: center; margin-bottom: 22px; }
 
-.track-logo {
-  width: 84px;
-  height: 84px;
-  margin: 0 auto 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--brand-soft);
-  border-radius: 26px;
-  box-shadow: var(--shadow);
+.track-brand img {
+  border-radius: 14px;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--brand) 22%, transparent);
 }
 
-.track-hero h1 {
-  font-size: 1.45rem;
-  font-weight: 700;
+.track-brand h1 {
+  margin: 12px 0 2px;
+  font-size: 1.32rem;
   letter-spacing: -0.01em;
-  margin: 0 0 8px;
 }
 
-.track-sub {
-  color: var(--muted);
-  font-size: .93rem;
-  line-height: 1.9;
-  margin: 0;
-}
+.track-brand p { color: var(--muted); margin: 0; font-size: .9rem; }
 
+/* privacy note as the manager's chip (brand-soft pill) */
 .track-privacy {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  margin: 14px 0 0;
-  padding: 8px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: .78rem;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 6px 12px !important;   /* override .chip's 1px padding */
+  color: var(--brand-text) !important;
+  line-height: 1.8;
+  text-align: right;
 }
 
-.track-privacy svg {
-  width: 14px;
-  height: 14px;
-  color: var(--brand-text);
-  flex: none;
-}
+.track-privacy svg { width: 14px; height: 14px; flex: none; }
 
 /* ----------------------------------------------------------------- form */
-#track-form { padding: 20px 18px 18px; }
+/* the login-card treatment: big radius, elevated shadow, roomy padding */
+.track-card {
+  border-radius: 22px;
+  box-shadow: var(--shadow-lg);
+  padding: 24px 20px 20px;
+  margin-bottom: 14px;
+}
 
-#track-form .field { margin-bottom: 16px; }
+.track-card .field { margin-bottom: 16px; }
 
 /* 16px font-size prevents the iOS auto-zoom on focus */
-#track-form input {
+.track-card input {
   min-height: 52px;
   font-size: 16px;
   border-radius: 12px;
@@ -84,22 +83,13 @@
 /* -------------------------------------------------------------- results */
 .track-count {
   display: flex;
-  align-items: center;
   justify-content: center;
-  gap: 7px;
-  color: var(--muted);
-  font-size: .84rem;
-  font-weight: 600;
-  margin: 18px 0 10px;
+  margin: 4px 0 14px;
+  animation: track-in .28s ease-out both;
 }
 
-.track-count::before,
-.track-count::after {
-  content: '';
-  height: 1px;
-  flex: 1 1 auto;
-  background: var(--border);
-}
+/* the manager's chip as the result counter */
+.track-count .chip { padding: 4px 12px; font-size: .8rem; }
 
 .track-message {
   padding: 16px 18px;
@@ -121,7 +111,8 @@
   to   { opacity: 1; transform: none; }
 }
 
-.track-order-head {
+/* order-card header: the manager's .order-head/.who vocabulary */
+.track-order .order-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -138,33 +129,17 @@
   margin-bottom: 3px;
 }
 
-.track-date { font-weight: 700; font-size: .98rem; }
+/* like .order-head .who .cust */
+.track-order .order-head .cust { font-weight: 700; font-size: 1rem; }
 
-.track-order .pill { font-size: .78rem; padding: 5px 12px; }
+.track-order .pill { font-size: .78rem; padding: 4px 11px; }
 
-.track-item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: .95rem;
-  padding: 5px 0;
-}
+/* items as the manager's dashed .sum-row rows */
+.track-items { margin-bottom: 2px; }
 
-.track-item::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--brand);
-  flex: none;
-  transform: translateY(-1px);
-}
+.track-items .sum-row { font-size: .92rem; }
 
-.track-item .track-qty {
-  color: var(--muted);
-  font-size: .8rem;
-  white-space: nowrap;
-}
+.track-items .sum-row .k { min-width: 0; }
 
 .track-sentence {
   font-size: .9rem;
@@ -190,10 +165,6 @@
   gap: 10px;
   flex-wrap: wrap;
 }
-
-/* small buttons still get a >=44px touch target on this page */
-.track-code-box .btn.small,
-.track-post-row .btn.small { min-height: 44px; }
 
 .track-code {
   font-size: 1.3rem;
@@ -305,6 +276,7 @@
 .track-skeleton {
   padding: 16px 18px;
   pointer-events: none;
+  border-radius: 22px;
 }
 
 .track-skeleton .sk {
@@ -360,7 +332,8 @@
 /* ------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .track-order,
-  .track-message { animation: none; }
+  .track-message,
+  .track-count { animation: none; }
 
   .track-skeleton .sk { animation: none; opacity: .8; }
 

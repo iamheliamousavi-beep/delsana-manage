@@ -31,18 +31,16 @@
   })();
 </script>
 </head>
-<body>
+<body class="track-page">
 
 <main class="track-wrap">
 
-  <!-- hero: one idea, one primary action below it -->
-  <header class="track-hero">
-    <div class="track-logo">
-      <img src="icon.svg" alt="" width="46" height="46">
-    </div>
+  <!-- brand block: same structure as the manager login screen -->
+  <header class="track-brand">
+    <img src="icon.svg" alt="" width="56" height="56">
     <h1>پیگیری سفارش دلسانا</h1>
-    <p class="track-sub">وضعیت سفارش‌های خود را با شماره موبایل و نام ببینید.</p>
-    <p class="track-privacy">
+    <p>وضعیت سفارش‌های خود را با شماره موبایل و نام ببینید.</p>
+    <p class="chip track-privacy">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="4" y="10" width="16" height="11" rx="2.5"/>
@@ -52,8 +50,8 @@
     </p>
   </header>
 
-  <!-- the primary action -->
-  <form id="track-form" class="card" novalidate>
+  <!-- the primary action, in a login-card-like surface -->
+  <form id="track-form" class="card track-card" novalidate>
     <div id="track-error" class="form-error" hidden></div>
     <div class="field">
       <label for="track-phone">شماره موبایل</label>
