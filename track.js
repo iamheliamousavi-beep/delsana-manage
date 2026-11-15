@@ -1,12 +1,14 @@
 /* ==========================================================================
-   track.js — the public order-tracking page (prompt-6 v2).
+   track.js — the public order-tracking page ("مسیر سفارش").
 
    Customers look up their orders with MOBILE NUMBER + NAME. No admin code,
    no login, no libraries: one plain fetch POST to a single narrow RPC.
    Nothing about the entered phone/name is ever stored (no localStorage,
    no URL, no cookies, no analytics). All rendering through DOM APIs only.
-   The markup reuses the manager app's vocabulary (order-head/who/cust,
-   sum-rows, chips, pills) so the page belongs to the same product family.
+
+   The visual language is the manager app's tokens (style.css) shaped into a
+   "parcel journey": a dated stage timeline, item rows and a dashed postal
+   ticket for the tracking code.
    ========================================================================== */
 
 (function () {
@@ -23,6 +25,7 @@
   /* --------------------------------------------------------- helpers ----- */
   var FA_DIGITS = '۰۱۲۳۴۵۶۷۸۹';
   var AR_DIGITS = '٠١٢٣٤٥٦٧٨٩';
+  var SVG_NS = 'http://www.w3.org/2000/svg';
 
   /* copied from ui.js (this page must not load the admin scripts) */
   function toEnDigits(s) {
@@ -66,6 +69,51 @@
       node.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
     }
     return node;
+  }
+
+  /* ------------------------------------------------------------- icons --- */
+  /* Static, hand-authored path constants only — never server data. */
+  var ICONS = {
+    lock: '<rect x="4.5" y="10" width="15" height="10.5" rx="2.5"/>' +
+          '<path d="M8.5 10V7.2a3.5 3.5 0 0 1 7 0V10"/>',
+    bag: '<path d="M6.5 7.5h11l1 12.5h-13l1-12.5Z"/>' +
+         '<path d="M9.5 7.5V6a2.5 2.5 0 0 1 5 0v1.5"/>',
+    box: '<path d="M20.5 8.2 12 3.5 3.5 8.2v7.6L12 20.5l8.5-4.7V8.2Z"/>' +
+         '<path d="m3.5 8.2 8.5 4.7 8.5-4.7"/><path d="M12 12.9v7.6"/>',
+    truck: '<path d="M3 16.5V6.5h11v10"/><path d="M14 10h3.8l3.2 3.4v3.1h-7"/>' +
+           '<circle cx="7.2" cy="18" r="1.7"/><circle cx="17.4" cy="18" r="1.7"/>',
+    home: '<path d="m3.5 10.2 8.5-6.7 8.5 6.7V19a1.5 1.5 0 0 1-1.5 1.5h-4.5v-5.3H9.5v5.3H5A1.5 1.5 0 0 1 3.5 19v-8.8Z"/>',
+    check: '<path d="m5 12.5 4.6 4.6L19 6.9"/>',
+    copy: '<rect x="9" y="9" width="11" height="11" rx="2.5"/>' +
+          '<path d="M5 15.5V5.5A1.5 1.5 0 0 1 6.5 4H16"/>',
+    external: '<path d="M14 4h6v6"/><path d="m20 4-9.5 9.5"/>' +
+              '<path d="M18.5 14.5V19a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V7A1.5 1.5 0 0 1 5 5.5h4.5"/>',
+    warn: '<path d="M12 3.8 2.8 19.8h18.4L12 3.8Z"/><path d="M12 9.4v4.2"/>' +
+          '<path d="M12 17h.01"/>',
+    clock: '<circle cx="12" cy="12" r="8.6"/><path d="M12 7.5V12l3 2"/>',
+    searchX: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/>' +
+             '<path d="m9 9 4 4"/><path d="m13 9-4 4"/>',
+    wifiOff: '<path d="m3 3 18 18"/><path d="M8.6 15.6a5 5 0 0 1 6.8 0"/>' +
+             '<path d="M5.2 12.2a10.4 10.4 0 0 1 3.1-1.8"/>' +
+             '<path d="M15.7 10.4a10.4 10.4 0 0 1 3.1 1.8"/>' +
+             '<path d="M2.5 8.6A15.5 15.5 0 0 1 7 6.4"/>' +
+             '<path d="M17 6.4a15.5 15.5 0 0 1 4.5 2.2"/><path d="M12 19h.01"/>',
+    refresh: '<path d="M20.5 12a8.5 8.5 0 1 1-2.49-6.01"/><path d="M20.5 4v5h-5"/>'
+  };
+
+  function icon(name, cls) {
+    var s = document.createElementNS(SVG_NS, 'svg');
+    s.setAttribute('viewBox', '0 0 24 24');
+    s.setAttribute('fill', 'none');
+    s.setAttribute('stroke', 'currentColor');
+    s.setAttribute('stroke-width', '1.8');
+    s.setAttribute('stroke-linecap', 'round');
+    s.setAttribute('stroke-linejoin', 'round');
+    s.setAttribute('aria-hidden', 'true');
+    s.setAttribute('focusable', 'false');
+    if (cls) s.setAttribute('class', cls);
+    s.innerHTML = ICONS[name] || '';
+    return s;
   }
 
   /* clipboard with an execCommand fallback (Instagram in-app browsers) */
@@ -130,10 +178,15 @@
 
   /* -------------------------------------------------------------- state -- */
   var form = $('track-form'), phoneIn = $('track-phone'), nameIn = $('track-name'),
-      submitBtn = $('track-submit'), errBox = $('track-error'),
-      results = $('track-results'), resetBtn = $('track-reset');
+      submitBtn = $('track-submit'), submitLabel = submitBtn.querySelector('.track-submit-label'),
+      errBox = $('track-error'), results = $('track-results'), resetBtn = $('track-reset'),
+      guideEl = $('track-guide');
   var busy = false;
   var skeletonTimer = null;
+
+  function setSubmitLabel(text) {
+    if (submitLabel) submitLabel.textContent = text;
+  }
 
   function showError(msg) {
     errBox.textContent = msg;
@@ -147,19 +200,26 @@
   function skeletonCard() {
     var card = el('div', { class: 'card track-skeleton', 'aria-hidden': 'true' });
     card.appendChild(el('div', { class: 'sk sk-title' }));
-    var row = el('div', { class: 'sk-row' },
-      el('div', { class: 'sk' }), el('div', { class: 'sk' }));
-    card.appendChild(row);
     card.appendChild(el('div', { class: 'sk sk-line' }));
-    card.appendChild(el('div', { class: 'sk sk-line w2' }));
+    for (var i = 0; i < 3; i++) {
+      card.appendChild(el('div', { class: 'sk-step' },
+        el('div', { class: 'sk sk-dot' }),
+        el('div', { class: 'sk sk-grow' })));
+    }
+    card.appendChild(el('div', { class: 'sk sk-divider' }));
     card.appendChild(el('div', { class: 'sk sk-line w3' }));
     return card;
   }
+  function skeletonHead() {
+    return el('div', { class: 'track-skeleton-head', 'aria-hidden': 'true' },
+      el('span', { class: 'sk sk-head-title' }),
+      el('span', { class: 'sk sk-head-chip' }));
+  }
   function showSkeleton() {
     if (!busy) return;
-    results.textContent = '';
     results.setAttribute('aria-busy', 'true');
-    resetBtn.hidden = false;
+    results.textContent = '';
+    results.appendChild(skeletonHead());
     results.appendChild(skeletonCard());
     results.appendChild(skeletonCard());
   }
@@ -169,108 +229,183 @@
   }
 
   /* ------------------------------------------------------------- render -- */
-  function messageCard(text) {
-    return el('div', { class: 'card track-message', text: text });
-  }
-
   function statusPill(stage) {
     var s = STAGE[stage] || STAGE.preparing;
-    return el('span', { class: 'pill ' + s.pillClass, text: s.pill });
+    return el('span', { class: 'pill ' + s.pillClass + ' track-status-pill' },
+      el('span', { class: 'track-pill-dot', 'aria-hidden': 'true' }),
+      s.pill);
   }
 
   function stepTracker(order) {
     /* ثبت سفارش → آماده‌سازی → ارسال → تحویل; understandable without
-       color: ✓ done / ● current / ○ future, plus dates when known */
+       color: each marker carries a stage icon (✓ for completed stops) */
     var steps = [
-      { label: 'ثبت سفارش', date: fmtDate(order.created_at) },
-      { label: 'آماده‌سازی', date: null },
-      { label: 'ارسال', date: order.shipped_at ? fmtDate(order.shipped_at) : null },
-      { label: 'تحویل', date: order.delivered_at ? fmtDate(order.delivered_at) : null }
+      { label: 'ثبت سفارش', icon: 'bag', date: fmtDate(order.created_at) },
+      { label: 'آماده‌سازی', icon: 'box', date: null },
+      { label: 'ارسال', icon: 'truck', date: order.shipped_at ? fmtDate(order.shipped_at) : null },
+      { label: 'تحویل', icon: 'home', date: order.delivered_at ? fmtDate(order.delivered_at) : null }
     ];
     var doneCount = { preparing: 1, shipped: 3, delivered: 4 }[order.stage] || 1;
 
-    var list = el('ol', { class: 'track-steps' });
+    var list = el('ol', { class: 'track-steps', 'aria-label': 'مراحل سفارش' });
     steps.forEach(function (st, idx) {
       var state = idx < doneCount ? 'done' : (idx === doneCount ? 'current' : 'future');
-      var mark = state === 'done' ? '✓' : (state === 'current' ? '●' : '○');
-      var item = el('li', { class: 'track-step ' + state },
-        el('span', { class: 'track-step-mark', 'aria-hidden': 'true', text: mark }),
-        el('span', { class: 'track-step-label', text: st.label }));
-      if (st.date) item.appendChild(el('span', { class: 'track-step-date', text: st.date }));
-      list.appendChild(item);
+      var mark = el('span', { class: 'track-step-mark' },
+        icon(state === 'done' ? 'check' : st.icon));
+
+      var when = st.date
+        ? el('span', { class: 'track-step-date', text: st.date })
+        : (state === 'current' ? el('span', { class: 'track-step-now', text: 'اکنون' }) : null);
+
+      list.appendChild(el('li', { class: 'track-step ' + state },
+        mark,
+        el('div', { class: 'track-step-main' },
+          el('span', { class: 'track-step-label', text: st.label }),
+          when)));
     });
     return list;
+  }
+
+  function setCopyState(btn, done) {
+    btn.textContent = '';
+    btn.appendChild(icon(done ? 'check' : 'copy'));
+    btn.appendChild(document.createTextNode(done ? 'کپی شد' : 'کپی کد رهگیری'));
+    btn.disabled = done;
   }
 
   function shippingBlock(order) {
     if (order.stage !== 'shipped' && order.stage !== 'delivered') return null;
 
     if (order.shipping_method === 'courier') {
-      return el('p', { class: 'track-shipping', text: 'سفارش شما با پیک ارسال شد.' });
+      return el('div', { class: 'track-ship-note' },
+        icon('truck'),
+        el('span', { text: 'سفارش شما با پیک ارسال شد.' }));
     }
 
     /* post */
     if (order.tracking) {
-      var codeBox = el('div', { class: 'track-code-box' },
-        el('div', { class: 'track-code', dir: 'ltr', text: order.tracking }),
-        el('button', {
-          class: 'btn small', type: 'button', text: 'کپی کد رهگیری',
-          onclick: function () {
-            copyText(order.tracking, function () {
-              var b = codeBox.querySelector('button');
-              if (b) { b.textContent = 'کپی شد ✓'; b.disabled = true;
-                       setTimeout(function () { b.textContent = 'کپی کد رهگیری';
-                                                b.disabled = false; }, 2000); }
-            });
-          }
-        }));
+      var copyBtn = el('button', { class: 'btn small track-copy', type: 'button' },
+        icon('copy'), el('span', { text: 'کپی کد رهگیری' }));
+
+      copyBtn.addEventListener('click', function () {
+        copyText(order.tracking, function () {
+          setCopyState(copyBtn, true);
+          setTimeout(function () { setCopyState(copyBtn, false); }, 2000);
+        });
+      });
+
+      var codeBox = el('div', { class: 'track-ticket' },
+        el('div', { class: 'track-ticket-head' },
+          el('span', { class: 'track-ticket-title', text: 'کد رهگیری پست' }),
+          el('span', { class: 'track-ticket-tag', text: 'پست' })),
+        el('div', { class: 'track-ticket-body' },
+          el('div', { class: 'track-code', dir: 'ltr', text: order.tracking }),
+          copyBtn));
 
       /* the VPN notice sits directly next to the post-site link */
       var linkRow = el('div', { class: 'track-post-row' },
         el('a', {
-          class: 'btn small', href: 'https://tracking.post.ir',
-          target: '_blank', rel: 'noopener noreferrer',
-          text: 'رهگیری در سایت پست'
-        }),
-        el('span', { class: 'alert warn track-vpn-note',
-                     text: 'قبل از ورود به سایت پست، فیلترشکن (VPN) خود را خاموش کنید.' }));
+          class: 'btn small track-post-link', href: 'https://tracking.post.ir',
+          target: '_blank', rel: 'noopener noreferrer'
+        }, icon('external'), el('span', { text: 'رهگیری در سایت پست' })),
+        el('span', { class: 'track-vpn-note' },
+          icon('warn'),
+          el('span', { text: 'قبل از ورود به سایت پست، فیلترشکن (VPN) خود را خاموش کنید.' })));
 
       return el('div', { class: 'track-shipping' }, codeBox, linkRow);
     }
 
-    return el('p', { class: 'track-shipping',
-      text: 'کد رهگیری هنوز صادر نشده است. از صبر و شکیبایی شما ممنونیم.' });
+    return el('div', { class: 'track-ship-note' },
+      icon('clock'),
+      el('span', { text: 'کد رهگیری هنوز صادر نشده است. از صبر و شکیبایی شما ممنونیم.' }));
   }
 
-  function orderCard(order) {
-    var s = STAGE[order.stage] || STAGE.preparing;
+  function orderCard(order, idx) {
+    var stage = STAGE[order.stage] ? order.stage : 'preparing';
+    var s = STAGE[stage];
 
-    var card = el('article', { class: 'card track-order' });
+    var card = el('article', { class: 'card track-order stage-' + stage });
+    card.style.setProperty('--i', String(Math.min(idx, 5)));
 
-    /* header: the manager's order-card vocabulary (.order-head/.who/.cust) */
-    var head = el('div', { class: 'order-head' },
-      el('div', { class: 'who' },
-        el('span', { class: 'track-label', text: 'تاریخ ثبت' }),
-        el('div', { class: 'cust', text: fmtDate(order.created_at) })),
-      statusPill(order.stage));
-    card.appendChild(head);
+    /* header: registration date + simplified status */
+    card.appendChild(el('div', { class: 'track-order-head' },
+      el('div', { class: 'track-order-when' },
+        el('span', { class: 'track-label', text: 'تاریخ ثبت سفارش' }),
+        el('strong', { class: 'track-order-date', text: fmtDate(order.created_at) })),
+      statusPill(stage)));
 
-    /* items as the manager's dashed .sum-row rows */
-    var items = el('div', { class: 'track-items' },
-      el('span', { class: 'track-label', text: 'اقلام سفارش' }));
-    (order.items || []).forEach(function (it) {
-      items.appendChild(el('div', { class: 'sum-row' },
-        el('span', { class: 'k', text: it.name || '' }),
-        el('span', { class: 'v', text: '× ' + toFaDigits(it.qty) })));
-    });
-    card.appendChild(items);
+    if (stage !== 'cancelled') card.appendChild(stepTracker(order));
 
-    if (s.sentence) card.appendChild(el('p', { class: 'track-sentence', text: s.sentence }));
+    if (s.sentence) {
+      card.appendChild(el('p', {
+        class: 'track-sentence' + (stage === 'cancelled' ? ' track-sentence--danger' : ''),
+        text: s.sentence
+      }));
+    }
+
+    /* items */
+    var items = order.items || [];
+    if (items.length) {
+      var itemsBox = el('div', { class: 'track-items' },
+        el('div', { class: 'track-items-label' },
+          el('span', { class: 'track-label', text: 'اقلام سفارش' }),
+          el('span', { class: 'track-items-count',
+                       text: toFaDigits(items.length) + ' قلم' })));
+
+      items.forEach(function (it) {
+        itemsBox.appendChild(el('div', { class: 'track-item' },
+          el('span', { class: 'track-item-name', text: it.name || '' }),
+          el('span', { class: 'track-item-qty', text: '× ' + toFaDigits(it.qty) })));
+      });
+      card.appendChild(itemsBox);
+    }
 
     var ship = shippingBlock(order);
     if (ship) card.appendChild(ship);
 
-    if (order.stage !== 'cancelled') card.appendChild(stepTracker(order));
+    return card;
+  }
+
+  function resultHead(count) {
+    return el('div', { class: 'track-result-head' },
+      el('div', { class: 'track-result-title' },
+        el('span', { class: 'track-eyebrow', text: 'نتیجه جست‌وجو' }),
+        el('h2', { text: 'سفارش‌های شما' })),
+      el('span', { class: 'chip track-count-chip', text: toFaDigits(count) + ' سفارش' }));
+  }
+
+  function messageCard(kind) {
+    var config = {
+      not_found: {
+        icon: 'searchX',
+        title: 'سفارشی پیدا نشد',
+        text: MSG.not_found
+      },
+      rate_limited: {
+        icon: 'clock',
+        title: 'کمی صبر کنید',
+        text: MSG.rate_limited
+      },
+      error: {
+        icon: 'wifiOff',
+        title: 'ارتباط برقرار نشد',
+        text: MSG.error
+      }
+    }[kind] || null;
+
+    if (!config) config = { icon: 'wifiOff', title: 'ارتباط برقرار نشد', text: MSG.error };
+
+    var card = el('div', { class: 'card track-message track-message--' + kind },
+      el('div', { class: 'track-message-icon', 'aria-hidden': 'true' }, icon(config.icon)),
+      el('h3', { text: config.title }),
+      el('p', { text: config.text }));
+
+    if (kind === 'error') {
+      card.appendChild(el('button', {
+        class: 'btn small', type: 'button',
+        onclick: function () { submitBtn.click(); }
+      }, icon('refresh'), el('span', { text: 'تلاش دوباره' })));
+    }
 
     return card;
   }
@@ -279,28 +414,32 @@
     clearSkeleton();
     results.textContent = '';   /* clear everything first */
     resetBtn.hidden = false;
+    document.body.classList.add('has-results');
 
     if (data && data.status === 'ok') {
       var orders = data.orders || [];
-      results.appendChild(el('p', { class: 'track-count' },
-        el('span', { class: 'chip',
-                     text: toFaDigits(orders.length) + ' سفارش پیدا شد' })));
-      orders.forEach(function (o) { results.appendChild(orderCard(o)); });
+      if (!orders.length) {
+        results.appendChild(messageCard('not_found'));
+        return;
+      }
+      results.appendChild(resultHead(orders.length));
+      orders.forEach(function (o, i) { results.appendChild(orderCard(o, i)); });
       return;
     }
     if (data && (data.status === 'not_found' || data.status === 'rate_limited')) {
-      results.appendChild(messageCard(MSG[data.status]));
+      results.appendChild(messageCard(data.status));
       return;
     }
     /* invalid (should not happen — client validates) and anything unknown */
-    results.appendChild(messageCard(MSG.error));
+    results.appendChild(messageCard('error'));
   }
 
   function renderNetworkError() {
     clearSkeleton();
     results.textContent = '';
     resetBtn.hidden = false;
-    results.appendChild(messageCard(MSG.error));
+    document.body.classList.add('has-results');
+    results.appendChild(messageCard('error'));
   }
 
   /* ------------------------------------------------------------- submit -- */
@@ -324,9 +463,12 @@
       return;
     }
 
+    if (guideEl) guideEl.hidden = true;
+    resetBtn.hidden = true;           /* no reset race while the lookup is in flight */
+
     busy = true;
     submitBtn.disabled = true;
-    submitBtn.textContent = 'در حال جست‌وجو…';
+    setSubmitLabel('در حال جست‌وجو…');
     skeletonTimer = setTimeout(showSkeleton, 120);
 
     fetch(TRACK_CONFIG.supabaseUrl + '/rest/v1/rpc/track_orders', {
@@ -348,18 +490,25 @@
         busy = false;
         clearSkeleton();
         submitBtn.disabled = false;
-        submitBtn.textContent = 'جست‌وجو';
+        setSubmitLabel('دیدن وضعیت سفارش');
       });
+  });
+
+  /* clear the inline error as soon as the customer edits a field */
+  [phoneIn, nameIn].forEach(function (inp) {
+    inp.addEventListener('input', function () { if (!errBox.hidden) clearError(); });
   });
 
   /* -------------------------------------------------------------- reset -- */
   resetBtn.addEventListener('click', function () {
     results.textContent = '';
     results.removeAttribute('aria-busy');
+    document.body.classList.remove('has-results');
     phoneIn.value = '';
     nameIn.value = '';
     resetBtn.hidden = true;
     clearError();
+    if (guideEl) guideEl.hidden = false;
     phoneIn.focus();
   });
 })();

@@ -684,8 +684,8 @@ customer's real name (first name alone or full name, both work) when registering
 **Deploy order:** run `migrations/014_public_order_tracking.sql` in the Supabase SQL
 editor FIRST (it is idempotent and safe on a fresh `setup.sql` too), then deploy the
 frontend (`track.html`, `track.css`, `track.js`, plus the updated `sw.js` and
-`screens.js`), then share `<site>/track.html`. The SW cache was bumped to `delsana-v19`
-for this.
+`screens.js`), then share `<site>/track.html`. The SW cache was bumped to `delsana-v20`
+for the track-page redesign (it was `delsana-v19` when the page first shipped).
 
 **Operational notes:**
 - The customer's browser must reach BOTH the site host and Supabase without a VPN

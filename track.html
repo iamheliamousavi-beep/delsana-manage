@@ -13,7 +13,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="track.css">
 <script>
@@ -35,43 +35,129 @@
 
 <main class="track-wrap">
 
-  <!-- brand block: same structure as the manager login screen -->
-  <header class="track-brand">
-    <img src="icon.svg" alt="" width="56" height="56">
-    <h1>پیگیری سفارش دلسانا</h1>
-    <p>وضعیت سفارش‌های خود را با شماره موبایل و نام ببینید.</p>
-    <p class="chip track-privacy">
+  <!-- slim brand bar: the page belongs to Delsana, without repeating a login hero -->
+  <header class="track-topbar">
+    <div class="track-identity">
+      <img src="icon.svg" alt="" width="36" height="36">
+      <span class="track-wordmark">دلسانا</span>
+    </div>
+    <span class="chip track-trust">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="4" y="10" width="16" height="11" rx="2.5"/>
-        <path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+        <rect x="4.5" y="10" width="15" height="10.5" rx="2.5"/>
+        <path d="M8.5 10V7.2a3.5 3.5 0 0 1 7 0V10"/>
+      </svg>
+      امن و بدون ورود
+    </span>
+  </header>
+
+  <!-- hero: the question, the promise, and a decorative parcel route -->
+  <section class="track-hero" aria-labelledby="track-title">
+    <p class="track-eyebrow">
+      <span class="track-eyebrow-rule" aria-hidden="true"></span>
+      پیگیری سفارش
+    </p>
+    <h1 id="track-title">سفارش شما<br><span class="track-h1-accent">کجاست؟</span></h1>
+    <p class="track-lede">
+      شماره موبایل و نامی که هنگام ثبت سفارش وارد کرده‌اید را بنویسید
+      تا مسیر بسته‌تان را ببینید.
+    </p>
+
+    <div class="track-route" aria-hidden="true">
+      <svg viewBox="0 0 520 88" fill="none">
+        <path class="track-route-base"
+              d="M492 26 C 448 26 436 62 372 62 S 306 28 250 28 S 168 62 128 62 S 88 42 70 42"/>
+        <path class="track-route-path"
+              d="M492 26 C 448 26 436 62 372 62 S 306 28 250 28 S 168 62 128 62 S 88 42 70 42"/>
+        <g class="track-route-nodes">
+          <circle cx="492" cy="26" r="5"/>
+          <circle cx="372" cy="62" r="5"/>
+          <circle cx="250" cy="28" r="5"/>
+          <circle cx="128" cy="62" r="5"/>
+          <circle class="track-route-halo" cx="70" cy="42" r="15"/>
+          <circle class="is-current" cx="70" cy="42" r="6.5"/>
+        </g>
+      </svg>
+    </div>
+  </section>
+
+  <!-- the primary action: a floating lookup card -->
+  <form id="track-form" class="card track-card" novalidate>
+    <div id="track-error" class="form-error" role="alert" hidden></div>
+
+    <div class="field track-field">
+      <label for="track-phone">شماره موبایل</label>
+      <div class="track-input-wrap">
+        <span class="track-input-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round">
+            <rect x="7" y="2.5" width="10" height="19" rx="2.6"/>
+            <path d="M10.8 18.5h2.4"/>
+          </svg>
+        </span>
+        <input id="track-phone" name="phone" type="tel" inputmode="tel"
+               autocomplete="tel" dir="ltr" placeholder="09xxxxxxxxx">
+      </div>
+    </div>
+
+    <div class="field track-field">
+      <label for="track-name">نام و نام خانوادگی</label>
+      <div class="track-input-wrap">
+        <span class="track-input-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="8" r="3.6"/>
+            <path d="M4.5 20a7.5 7.5 0 0 1 15 0"/>
+          </svg>
+        </span>
+        <input id="track-name" name="name" type="text" autocomplete="name"
+               aria-describedby="track-name-hint"
+               placeholder="مثلاً مریم احمدی">
+      </div>
+      <p class="hint" id="track-name-hint">همان نامی که هنگام ثبت سفارش اعلام کرده‌اید</p>
+    </div>
+
+    <button id="track-submit" class="btn primary track-submit" type="submit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="6.5"/>
+        <path d="m16 16 4.5 4.5"/>
+      </svg>
+      <span class="track-submit-label">دیدن وضعیت سفارش</span>
+    </button>
+
+    <p class="track-privacy-note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="4.5" y="10" width="15" height="10.5" rx="2.5"/>
+        <path d="M8.5 10V7.2a3.5 3.5 0 0 1 7 0V10"/>
       </svg>
       اطلاعات شما فقط برای پیدا کردن سفارش‌تان استفاده می‌شود
     </p>
-  </header>
-
-  <!-- the primary action, in a login-card-like surface -->
-  <form id="track-form" class="card track-card" novalidate>
-    <div id="track-error" class="form-error" hidden></div>
-    <div class="field">
-      <label for="track-phone">شماره موبایل</label>
-      <input id="track-phone" name="phone" type="tel" inputmode="tel"
-             autocomplete="tel" dir="ltr" placeholder="09xxxxxxxxx">
-    </div>
-    <div class="field">
-      <label for="track-name">نام و نام خانوادگی</label>
-      <input id="track-name" name="name" type="text" autocomplete="name"
-             placeholder="مثلاً مریم احمدی">
-      <p class="hint">همان نامی که هنگام ثبت سفارش اعلام کرده‌اید</p>
-    </div>
-    <button id="track-submit" class="btn primary track-submit" type="submit">
-      جست‌وجو
-    </button>
   </form>
+
+  <!-- a three-step preview, hidden after the first search -->
+  <ol id="track-guide" class="track-guide" aria-label="مراحل جست‌وجو">
+    <li>
+      <span class="track-guide-num" aria-hidden="true">۱</span>
+      <span class="track-guide-label">شماره موبایل</span>
+      <span class="track-guide-sub">همان شماره ثبت سفارش</span>
+    </li>
+    <li>
+      <span class="track-guide-num" aria-hidden="true">۲</span>
+      <span class="track-guide-label">نام ثبت‌شده</span>
+      <span class="track-guide-sub">همان‌طور که اعلام کرده‌اید</span>
+    </li>
+    <li>
+      <span class="track-guide-num" aria-hidden="true">۳</span>
+      <span class="track-guide-label">وضعیت و مسیر</span>
+      <span class="track-guide-sub">همراه با کد رهگیری</span>
+    </li>
+  </ol>
 
   <section id="track-results" aria-live="polite"></section>
 
-  <div class="track-actions">
+  <div class="track-actions" role="group" aria-label="اقدام‌ها">
     <a id="track-dm" class="btn track-dm" href="https://ig.me/m/delsana.co"
        target="_blank" rel="noopener">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -80,7 +166,14 @@
       </svg>
       پیام در دایرکت
     </a>
-    <button id="track-reset" class="btn ghost track-reset" type="button" hidden>جست‌وجوی جدید</button>
+    <button id="track-reset" class="btn ghost track-reset" type="button" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20.5 12a8.5 8.5 0 1 1-2.49-6.01"/>
+        <path d="M20.5 4v5h-5"/>
+      </svg>
+      جست‌وجوی جدید
+    </button>
   </div>
 
 </main>
