@@ -1,3 +1,61 @@
+## track / 2026-11 — Public order-tracking page for customers («پیگیری سفارش»)
+
+A separate public page, `track.html`, for CUSTOMERS: mobile number AND name (the name
+they gave when ordering) → their orders with a simplified status. No login, no admin
+code. The postal code is NOT used anywhere (the earlier "phone + postal code" idea was
+replaced — many customers have none). Customers never touch a table: one narrow
+security-definer RPC (`track_orders`) returns a whitelisted field set only; "not found"
+is one generic answer; two rate limits (per-IP 10 fails/15 min, per-phone 8 fails/60 min,
+md5 hashes only) because name+phone is a weaker check the owner knowingly accepted.
+
+1. Files changed and purpose
+
+- `migrations/014_public_order_tracking.sql` (new, idempotent) —
+  `normalize_person_name(text)`: immutable normalizer (digits dropped, Arabic letters
+  mapped, tatweel/diacritics/zero-width/bidi stripped, explicit punctuation list →
+  spaces), NOT callable by clients; `track_orders(text, text)`: security definer,
+  exact last-10-digit phone match + whole-word name match (`string_to_array` + `@>`,
+  never LIKE), stage mapping (new/awaiting_snapp/paid/settled → "preparing"), tracking
+  code only for post + shipped/delivered + non-blank, step dates from the LAST matching
+  `status_history` entry, `track_attempts` table (RLS on, no policies, `(ip_hash, at)`
+  and `(phone_hash, at)` indexes) with per-IP and per-phone limits and 1-day
+  housekeeping, expression index `orders_phone10_idx` (`normalize_digits` is immutable),
+  grants at the end (`track_orders` → anon/authenticated/service_role; nothing else
+  callable by anon — also revokes the default-PUBLIC `order_history_entry` and
+  `assert_page_claim_receipt_sum`), `notify pgrst, 'reload schema'`.
+- `setup.sql` — the migration mirrored verbatim as a new final section (fresh installs).
+- `track.html` / `track.css` / `track.js` (new) — RTL, mobile-first, same theme tokens
+  and fonts, anti-FOUC script, `noindex/nofollow` + `no-referrer`, no manifest/install
+  prompt, no SW registration, no admin libraries; plain fetch POST to
+  `/rest/v1/rpc/track_orders`; Jalali/Tehran dates; step tracker; copy-code button with
+  an `execCommand` fallback for the Instagram in-app browser; post-site link with the
+  VPN notice; «پیام در دایرکت» (`ig.me/m/delsana.co`); DOM-API-only rendering.
+- `sw.js` — `track.*` added to SHELL, cache `delsana-v18` → `delsana-v19`, and
+  navigations are now cached under their own URL so an offline `track.html` visit never
+  falls back to the admin app (POST is never cached, so the RPC response cannot be).
+- `screens.js` — Settings card «لینک پیگیری مشتری» with «کپی لینک» (link derived from
+  `location.pathname`, clipboard fallback included).
+- `tests/track_orders.sql` (new, rolled back, ends with `ALL PASSED`) — phone formats
+  (Persian/Arabic digits, +98, 0098, dashes/spaces, stored phone with separators), the
+  whole-word name rule (positives, negatives, one-letter/empty → invalid), newest-first,
+  shared phone/different names, the 10-order cap, stage mapping for all 7 statuses,
+  tracking-code rules, history-derived dates, the leak test (exact key set; no name,
+  phone, address, postal code, note, amounts, history user id or order id), anon
+  privileges, both rate limits (invalid inputs count for the IP bucket; successes are
+  free) and housekeeping.
+- `README.md` (§1 file table, §12 migration note, §13 checklist item 20, new §14) — docs.
+
+2. Deploy order
+
+    -- 1) Supabase SQL editor:
+    migrations/014_public_order_tracking.sql
+    -- 2) then push the frontend (track.html, track.css, track.js, sw.js, screens.js)
+    -- 3) share <site>/track.html (or Settings → «لینک پیگیری مشتری»)
+
+The customers' browser must reach the site host and Supabase without a VPN.
+
+---
+
 ## notify / 2026-11 — Whoever creates an invoice also receives that invoice
 
 Business rule (8.1 exception): the creator of a new invoice also receives the

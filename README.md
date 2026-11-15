@@ -20,6 +20,7 @@ Plain HTML/CSS/vanilla JavaScript, no framework, no build step, no `npm`. Backen
 | `calc.js` | Pure money calculations (single source of truth) |
 | `ui.js` | DOM helpers, formatting, toasts, dialogs, validation, CSV |
 | `screens.js` | The seven screens (products, new order, orders, accounts, reports, settings, post-list import) |
+| `track.html`, `track.css`, `track.js` | The PUBLIC order-tracking page for customers («پیگیری سفارش», section 14) — no admin code, no login |
 | `postimport.js` | Pure PDF-text parsing + order matching for the post-list import (section 8.1) |
 | `lib/pdfjs/` | Vendored pdf.js 3.11.174 (`pdf.min.js`, `pdf.worker.min.js`, `LICENSE`) |
 | `setup.sql` | Schema, RLS policies, indexes, triggers and all RPCs (incl. the page-claims ledger) |
@@ -27,7 +28,7 @@ Plain HTML/CSS/vanilla JavaScript, no framework, no build step, no `npm`. Backen
 | `icon.svg`, `icon-192.png`, `icon-512.png` | Icons |
 | `tests.html` | Automated checks for the money examples, `pageSplit`, invariants and sweeps |
 | `migrations/` | Idempotent upgrade migrations for existing databases (see section 12) |
-| `tests/` | SQL test files for the SQL Editor (`mixed_payment`, `admin_edit_delete`, `page_claims`) |
+| `tests/` | SQL test files for the SQL Editor (`mixed_payment`, `admin_edit_delete`, `page_claims`, `track_orders`) |
 | `README.md` | This file |
 
 ---
@@ -550,6 +551,9 @@ Notes:
    functions, the receipts/allocations tables and the record/void RPCs); until it is
    applied the Accounts tab's «طلب پیج از مغازه» card reports a missing-RPC error and
    shows no receipts — run it before pushing the frontend, after exporting a CSV backup.
+   Migration 014 adds the public order-tracking page backend (`track_orders`,
+   `normalize_person_name`, `track_attempts`); until it is applied
+   `track.html` reports a server error — run it before deploying the frontend.
 3. Supabase Dashboard → **Authentication → Providers → Email** → turn **OFF** «Allow new users to
    sign up» (the app has only its hand-created users, section 5.4 of the spec).
 4. Set the secrets (10.2), deploy the four functions (10.3, 10.6, 10.7), register the Telegram
@@ -569,6 +573,7 @@ Notes:
 | `tests/mixed_payment.sql` in the SQL Editor | OWNER/M1–M9, all error cases, all 13 old examples and a 500-combo invariant sweep against `public.order_amounts` (no login needed; ends with `ALL PASSED`). |
 | `tests/admin_edit_delete.sql` in the SQL Editor | Admin RPCs on throw-away rows (rolled back): non-admin block on all 7 RPCs, delivered-order edit (2 cases + invariants), cash → mixed OWNER numbers, unknown-key rejection, delete (audit + `order_deleted` + pending processed), restore (same id, double-restore fails), product delete count + snapshots. Ends with `ALL PASSED`. |
 | `tests/page_claims.sql` in the SQL Editor | The «طلب پیج از مغازه» ledger (rolled back): role gate, ineligible orders, partial receipts, FIFO split over two invoices, manual validation (exact sum / over-allocation / duplicates), future date, void + idempotency, `admin_delete_order` guard + restore, over-received mismatch, no outbox events, RLS reads, and a 500-combo sweep asserting the SQL functions return exactly the JS values. Ends with `ALL PASSED`. |
+| `tests/track_orders.sql` in the SQL Editor | The public tracking function (rolled back; run AFTER migration 014): phone formats (Persian/Arabic digits, `+98`, `0098`, dashes/spaces), the whole-word name rule (positives incl. ZWNJ/Arabic letters, negatives, one-letter/empty → `invalid`), newest-first, shared phone/different names, the 10-order cap, stage mapping for all 7 statuses, tracking-code rules, history-derived dates, the leak test (exact key set, no forbidden fields), anon privileges, both rate limits and housekeeping. Ends with `ALL PASSED`. |
 | SQL harness (`run.js`) | 329 checks: both installation paths, all grants and RLS, the money invariants and the notification RPCs (development only, not shipped). |
 
 **Manual checklist — run once after every deploy**
@@ -623,3 +628,70 @@ Notes:
     Open a deleted order's deep link (`?view=orders&order=<id>`): no crash, no highlight.
 19. Admin product delete: the confirm shows how many orders reference the product; after
     deletion those orders still render with their old snapshots.
+20. Open `track.html` in a phone-width viewport (light and dark): colors/fonts match the
+    app. Search with Persian digits, with `+98…`, with first name only and with full name:
+    the order appears. Wrong name → the generic not-found text (identical to a wrong phone).
+    Courier shipped / post shipped with code (copy button + VPN notice next to the post
+    link) / post shipped without a code / preparing / cancelled: all texts exact. Network
+    tab: exactly one request to `/rest/v1/rpc/track_orders`, no forbidden fields in the
+    payload/response, nothing stored in localStorage/cookies.
+
+---
+
+## 14. Public order tracking («پیگیری سفارش»)
+
+A separate public page for CUSTOMERS, `track.html`. Its link goes in the Instagram bio or
+is sent in DM: `<your site>/track.html` (the exact link with a copy button is in the app:
+Settings → «لینک پیگیری مشتری»). No login, no admin code on that page.
+
+**What the customer does:** types their MOBILE NUMBER and the NAME they gave when
+ordering. The page shows their orders (newest first, at most 10): registration date
+(Jalali, Tehran time), the ordered items and a simplified status — «در حال آماده‌سازی»,
+«ارسال شد» (with the tracking code for post orders, plus the post-site link and a
+"turn off your VPN" notice), «تحویل شد», or «لغو شده». Internal payment states
+(`new`/`awaiting_snapp`/`paid`/`settled`) are never shown to the customer.
+
+**Privacy model:**
+- The lookup requires BOTH values to match the SAME order: the full mobile number AND
+  the name. Never name-only, never phone-only, never prefix matching. «Not found» is one
+  generic answer that never reveals which half was wrong.
+- Customers never touch a table. They call ONE narrow database function,
+  `track_orders(text, text)` (`security definer`), which returns a whitelisted set of
+  fields only: registration time, item names + quantities, the simplified stage, the
+  shipping method, the tracking code (only post + shipped/delivered with a non-blank
+  code) and the shipped/delivered/cancelled dates. It NEVER returns: customer name,
+  phone, address, postal code, prices/totals/discounts, payment method, notes, pin data,
+  money fields, raw `status_history` rows (they contain the user id and private notes),
+  `last_actor`, order ids or any other id.
+- The page stores nothing: no localStorage, no URL parameters, no cookies, no analytics,
+  no third-party scripts; `noindex/nofollow` and `no-referrer` are set.
+- Abuse protection, two limits (only md5 hashes are stored, never the IP or the phone):
+  per-IP 10 failed attempts / 15 minutes; per-phone 8 failed attempts / 60 minutes —
+  the per-phone limit is what stops name-guessing against one phone across any number
+  of IPs. Accepted trade-off: an attacker who deliberately fails 8 times for someone
+  else's phone can lock that customer out for up to an hour (they can DM instead).
+- The owner knowingly accepted that name + phone is a weaker check than phone + postal
+  code (many customers have no postal code); that is exactly why the response is
+  strictly limited and the limits are stricter.
+
+**Name matching rule:** the typed name is normalized (Persian/Arabic digits, Arabic
+letters, ZWNJ/bidi marks, punctuation) and split into words; every typed word must EQUAL
+a whole word of the stored name (order-insensitive, never a prefix). So «مریم»,
+«احمدی», «احمدی مریم» and «مریم احمدی» all match a stored «مریم احمدی»; «مری», «احمد»,
+«مریم رضایی» or «مریم احمدی‌نژاد» do not. Nicknames do not work: staff must save the
+customer's real name (first name alone or full name, both work) when registering orders.
+
+**Deploy order:** run `migrations/014_public_order_tracking.sql` in the Supabase SQL
+editor FIRST (it is idempotent and safe on a fresh `setup.sql` too), then deploy the
+frontend (`track.html`, `track.css`, `track.js`, plus the updated `sw.js` and
+`screens.js`), then share `<site>/track.html`. The SW cache was bumped to `delsana-v19`
+for this.
+
+**Operational notes:**
+- The customer's browser must reach BOTH the site host and Supabase without a VPN
+  (the post-site link itself is `tracking.post.ir`, which is why the VPN notice exists).
+- `track.html` does not register the service worker and never offers to install the
+  admin app. It is pre-cached in the SW shell only so a controlled tab's offline visit
+  does not fall back to the admin app.
+- Tests: `tests/track_orders.sql` in the SQL Editor (rolled back, ends with
+  `ALL PASSED`) — phone/name matching, the leak test, privileges, both rate limits.

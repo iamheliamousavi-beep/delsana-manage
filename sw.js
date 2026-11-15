@@ -4,12 +4,15 @@
    Version the CACHE name on every deploy that changes static files. */
 'use strict';
 
-var CACHE = 'delsana-v18';
+var CACHE = 'delsana-v19';
 var SHELL = [
   './index.html',
+  './track.html',
   './style.css',
+  './track.css',
   './calc.js',
   './ui.js',
+  './track.js',
   './db.js',
   './postimport.js',
   './screens.js',
@@ -59,18 +62,25 @@ self.addEventListener('fetch', function (event) {
     });
   }
 
-  /* navigations: network first so a new deploy is picked up immediately */
+  /* navigations: network first so a new deploy is picked up immediately.
+     Each navigation is cached under its OWN URL (not a fixed ./index.html
+     key) so an offline visit to ./track.html serves track.html and never
+     falls back to the admin app. */
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req).then(function (res) {
         if (res && res.ok) {
           var copy = res.clone();
-          caches.open(CACHE).then(function (c) { c.put('./index.html', copy); });
+          caches.open(CACHE).then(function (c) { c.put(req, copy); });
         }
         return res;
       }).catch(function () {
-        return caches.match('./index.html').then(function (hit) {
-          return hit || offlineFallback();
+        return caches.match(req).then(function (hit) {
+          if (hit) return hit;
+          /* unknown paths keep the old behaviour: show the app */
+          return caches.match('./index.html').then(function (app) {
+            return app || offlineFallback();
+          });
         });
       })
     );

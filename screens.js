@@ -3762,6 +3762,39 @@ var Screens = (function () {
     refresh: function () { fillSettings(true); refreshTelegramPaused(); }
   };
 
+  /* لینک پیگیری مشتری: <site>/<dir>/track.html — the directory is derived
+     from location.pathname so it also works when the app is not hosted at
+     the domain root */
+  function trackPageLink() {
+    var path = location.pathname || '/';
+    var dir = path.slice(0, path.lastIndexOf('/') + 1);
+    return location.origin + dir + 'track.html';
+  }
+
+  function copyTrackLink() {
+    var link = trackPageLink();
+    var done = function () { UI.toast('لینک پیگیری کپی شد', 'ok'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link).then(done, function () { copyFallback(link, done); });
+    } else {
+      copyFallback(link, done);
+    }
+  }
+
+  /* execCommand fallback (Instagram in-app browser etc.) */
+  function copyFallback(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) { /* best effort */ }
+    document.body.removeChild(ta);
+    if (done) done();
+  }
+
   function buildSettings(h) {
     h.appendChild(el('div', { class: 'view-head' }, el('h2', { text: 'تنظیمات' })));
 
@@ -3803,6 +3836,18 @@ var Screens = (function () {
           onclick: function () { UI.theme.toggle(); }
         }))));
     UI.theme.paint();
+
+    /* لینک پیگیری مشتری — the public tracking page (migrations/014).
+       The full link is derived from where the app is hosted, so it also
+       works when the app is NOT at the domain root. */
+    h.appendChild(el('div', { class: 'card' },
+      el('div', { class: 'card-title' }, el('h3', { text: 'لینک پیگیری مشتری' })),
+      el('p', { class: 'hint', text: 'لینک عمومی «پیگیری سفارش» را در بایو بگذارید یا برای مشتری بفرستید.' }),
+      el('div', { class: 'row wrap', style: 'margin-top:6px' },
+        el('button', {
+          class: 'btn', type: 'button', text: 'کپی لینک پیگیری',
+          onclick: copyTrackLink
+        }))));
 
     /* section 9.5 — notifications card (Telegram + phone) */
     h.appendChild(el('div', { class: 'card', id: 'notify-card' },

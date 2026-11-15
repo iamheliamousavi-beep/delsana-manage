@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>پیگیری سفارش | دلسانا</title>
+<meta name="description" content="پیگیری وضعیت سفارش‌های دلسانا با شماره موبایل و نام">
+<!-- a public page: never indexed, no referrer leakage -->
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F2F1E8">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="track.css">
+<script>
+  /* same anti-FOUC theme script as index.html: stored light/dark choice
+     before first paint; no stored pref -> CSS follows the system */
+  (function () {
+    try {
+      var t = localStorage.getItem('delsana-theme');
+      if (t === 'light' || t === 'dark') {
+        document.documentElement.setAttribute('data-theme', t);
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.content = t === 'dark' ? '#13150F' : '#F2F1E8';
+      }
+    } catch (e) { /* private mode */ }
+  })();
+</script>
+</head>
+<body>
+
+<main class="track-wrap">
+  <header class="track-brand">
+    <img src="icon.svg" alt="" width="64" height="64">
+    <h1>پیگیری سفارش دلسانا</h1>
+    <p>وضعیت سفارش‌های خود را با شماره موبایل و نام ببینید.</p>
+    <p class="track-privacy">اطلاعات شما فقط برای پیدا کردن سفارش‌تان استفاده می‌شود.</p>
+  </header>
+
+  <form id="track-form" class="card" novalidate>
+    <div id="track-error" class="form-error" hidden></div>
+    <div class="field">
+      <label for="track-phone">شماره موبایل</label>
+      <input id="track-phone" name="phone" type="tel" inputmode="tel"
+             autocomplete="tel" dir="ltr" placeholder="09xxxxxxxxx">
+    </div>
+    <div class="field">
+      <label for="track-name">نام و نام خانوادگی</label>
+      <input id="track-name" name="name" type="text" autocomplete="name"
+             placeholder="مثلاً مریم احمدی">
+      <p class="hint">همان نامی که هنگام ثبت سفارش اعلام کرده‌اید</p>
+    </div>
+    <button id="track-submit" class="btn primary block" type="submit">جست‌وجو</button>
+  </form>
+
+  <section id="track-results" aria-live="polite"></section>
+
+  <div class="track-actions">
+    <a id="track-dm" class="btn block" href="https://ig.me/m/delsana.co"
+       target="_blank" rel="noopener">پیام در دایرکت</a>
+    <button id="track-reset" class="btn ghost block" type="button" hidden>جست‌وجوی جدید</button>
+  </div>
+</main>
+
+<script src="track.js"></script>
+</body>
+</html>
