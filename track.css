@@ -1,82 +1,210 @@
 /* ==========================================================================
    track.css — page-specific layout for track.html (the public order
    tracking page). Uses ONLY the existing style.css tokens/classes —
-   no new colors, works in light and dark mode and without the web font.
+   no new colors. Direction: hero-centric, calm hierarchy, soft depth,
+   200-300ms motion, visible focus, >=44px touch targets, and full
+   prefers-reduced-motion support. Works in light/dark and without the
+   web font (Tahoma fallback).
    ========================================================================== */
 
 .track-wrap {
-  max-width: 480px;
+  max-width: 520px;
   margin: 0 auto;
-  padding: 20px 14px 48px;
+  padding: 28px 16px 56px;
 }
 
-/* ----------------------------------------------------------------- brand */
-.track-brand { text-align: center; margin: 12px 0 18px; }
-.track-brand img { width: 64px; height: 64px; }
-.track-brand h1 { font-size: 1.25rem; margin: 10px 0 4px; }
-.track-brand p { color: var(--muted); font-size: .88rem; margin: 3px 0; }
-.track-privacy { font-size: .8rem; }
+/* ----------------------------------------------------------------- hero */
+.track-hero { text-align: center; margin: 4px 0 22px; }
+
+.track-logo {
+  width: 84px;
+  height: 84px;
+  margin: 0 auto 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brand-soft);
+  border-radius: 26px;
+  box-shadow: var(--shadow);
+}
+
+.track-hero h1 {
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+}
+
+.track-sub {
+  color: var(--muted);
+  font-size: .93rem;
+  line-height: 1.9;
+  margin: 0;
+}
+
+.track-privacy {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 14px 0 0;
+  padding: 8px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+.track-privacy svg {
+  width: 14px;
+  height: 14px;
+  color: var(--brand-text);
+  flex: none;
+}
 
 /* ----------------------------------------------------------------- form */
-#track-form { padding: 16px; }
+#track-form { padding: 20px 18px 18px; }
+
+#track-form .field { margin-bottom: 16px; }
+
+/* 16px font-size prevents the iOS auto-zoom on focus */
+#track-form input {
+  min-height: 52px;
+  font-size: 16px;
+  border-radius: 12px;
+}
+
+.track-submit {
+  width: 100%;
+  min-height: 52px;
+  font-size: 1rem;
+  margin-top: 4px;
+}
 
 /* -------------------------------------------------------------- results */
 .track-count {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   color: var(--muted);
-  font-size: .85rem;
-  margin: 14px 0 10px;
+  font-size: .84rem;
+  font-weight: 600;
+  margin: 18px 0 10px;
 }
 
-.track-message { padding: 14px 16px; line-height: 1.9; }
+.track-count::before,
+.track-count::after {
+  content: '';
+  height: 1px;
+  flex: 1 1 auto;
+  background: var(--border);
+}
 
-.track-order { padding: 14px 16px; margin-bottom: 12px; }
+.track-message {
+  padding: 16px 18px;
+  line-height: 2;
+  font-size: .93rem;
+  animation: track-in .28s ease-out both;
+}
+
+.track-order { padding: 16px 18px; }
+
+/* entrance: subtle rise, staggered per card */
+.track-order { animation: track-in .3s ease-out both; }
+.track-order:nth-child(2) { animation-delay: .05s; }
+.track-order:nth-child(3) { animation-delay: .1s; }
+.track-order:nth-child(n+4) { animation-delay: .15s; }
+
+@keyframes track-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
 
 .track-order-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
 }
 
 .track-label {
   display: block;
   color: var(--muted);
-  font-size: .78rem;
-  margin-bottom: 2px;
+  font-size: .75rem;
+  margin-bottom: 3px;
 }
 
-.track-date { font-weight: 600; font-size: .92rem; }
+.track-date { font-weight: 700; font-size: .98rem; }
 
-.track-item { font-size: .95rem; padding: 2px 0; }
+.track-order .pill { font-size: .78rem; padding: 5px 12px; }
 
-.track-sentence { font-size: .9rem; color: var(--muted); margin: 8px 0 0; }
+.track-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: .95rem;
+  padding: 5px 0;
+}
+
+.track-item::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--brand);
+  flex: none;
+  transform: translateY(-1px);
+}
+
+.track-item .track-qty {
+  color: var(--muted);
+  font-size: .8rem;
+  white-space: nowrap;
+}
+
+.track-sentence {
+  font-size: .9rem;
+  color: var(--muted);
+  line-height: 1.9;
+  margin: 10px 0 0;
+}
 
 /* ------------------------------------------------------- shipping block */
 .track-shipping {
-  margin-top: 10px;
-  padding: 10px 12px;
+  margin-top: 12px;
+  padding: 12px 14px;
   background: var(--surface-2);
   border-radius: var(--radius-sm);
   font-size: .9rem;
+  line-height: 1.9;
 }
 
 .track-code-box {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
+/* small buttons still get a >=44px touch target on this page */
+.track-code-box .btn.small,
+.track-post-row .btn.small { min-height: 44px; }
+
 .track-code {
-  font-size: 1.25rem;
+  font-size: 1.3rem;
   font-weight: 700;
-  letter-spacing: 1px;
+  letter-spacing: 1.5px;
   user-select: text;
   -webkit-user-select: text;
   word-break: break-all;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
 }
 
 .track-post-row {
@@ -91,8 +219,9 @@
 .track-vpn-note {
   display: inline;
   font-size: .78rem;
-  padding: 6px 10px;
+  padding: 7px 10px;
   margin: 0;
+  line-height: 1.8;
 }
 
 /* --------------------------------------------------------- step tracker */
@@ -100,7 +229,7 @@
   list-style: none;
   display: flex;
   padding: 0;
-  margin: 14px 0 0;
+  margin: 16px 0 0;
 }
 
 .track-step {
@@ -114,13 +243,15 @@
 .track-step::before {
   content: '';
   position: absolute;
-  top: 9px;
+  top: 12px;
   right: 50%;
   width: 100%;
   height: 2px;
   background: var(--border);
 }
+
 .track-step:first-child::before { display: none; }
+
 .track-step.done::before { background: var(--brand); }
 
 .track-step-mark {
@@ -129,13 +260,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   background: var(--surface-2);
   color: var(--muted);
-  font-size: .7rem;
-  border: 2px solid var(--surface);
+  font-size: .72rem;
+  border: 2px solid transparent;
+  transition: background .25s, color .25s, border-color .25s;
 }
 
 .track-step.done .track-step-mark {
@@ -153,7 +285,7 @@
   display: block;
   font-size: .74rem;
   color: var(--muted);
-  margin-top: 4px;
+  margin-top: 5px;
 }
 
 .track-step.current .track-step-label,
@@ -166,8 +298,74 @@
   display: block;
   font-size: .68rem;
   color: var(--muted);
-  margin-top: 1px;
+  margin-top: 2px;
+}
+
+/* ------------------------------------------------------- loading shimmer */
+.track-skeleton {
+  padding: 16px 18px;
+  pointer-events: none;
+}
+
+.track-skeleton .sk {
+  height: 14px;
+  border-radius: 7px;
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    color-mix(in srgb, var(--surface-2) 55%, var(--surface)) 50%,
+    var(--surface-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: sk-shimmer 1.2s ease-in-out infinite;
+}
+
+.track-skeleton .sk-row { display: flex; justify-content: space-between; gap: 12px; }
+.track-skeleton .sk-row .sk { flex: 1 1 auto; }
+.track-skeleton .sk-row .sk:last-child { flex: 0 0 84px; }
+.track-skeleton .sk-title { width: 45%; height: 17px; margin-bottom: 12px; }
+.track-skeleton .sk-line { margin-top: 9px; }
+.track-skeleton .sk-line.w2 { width: 72%; }
+.track-skeleton .sk-line.w3 { width: 56%; }
+
+@keyframes sk-shimmer {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
 }
 
 /* -------------------------------------------------------------- actions */
-.track-actions { display: grid; gap: 8px; margin-top: 16px; }
+.track-actions { display: grid; gap: 10px; margin-top: 18px; }
+
+.track-dm {
+  min-height: 50px;
+  justify-content: center;
+  gap: 9px;
+  font-size: .95rem;
+}
+
+.track-dm svg { width: 19px; height: 19px; }
+
+.track-reset { min-height: 44px; }
+
+/* -------------------------------------------------- focus / interaction */
+.track-wrap a:focus-visible,
+.track-wrap button:focus-visible,
+.track-wrap input:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.track-wrap .btn:active { transform: translateY(1px); }
+
+/* ------------------------------------------------------- reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .track-order,
+  .track-message { animation: none; }
+
+  .track-skeleton .sk { animation: none; opacity: .8; }
+
+  .track-step-mark,
+  .track-wrap .btn { transition: none; }
+
+  .track-wrap .btn:active { transform: none; }
+}

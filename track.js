@@ -131,12 +131,40 @@
       submitBtn = $('track-submit'), errBox = $('track-error'),
       results = $('track-results'), resetBtn = $('track-reset');
   var busy = false;
+  var skeletonTimer = null;
 
   function showError(msg) {
     errBox.textContent = msg;
     errBox.hidden = false;
   }
   function clearError() { errBox.hidden = true; }
+
+  /* --------------------------------------------------- loading skeleton -- */
+  /* a stable skeleton instead of a flickering spinner; shown only if the
+     lookup takes longer than 120ms, so fast answers never flash it */
+  function skeletonCard() {
+    var card = el('div', { class: 'card track-skeleton', 'aria-hidden': 'true' });
+    card.appendChild(el('div', { class: 'sk sk-title' }));
+    var row = el('div', { class: 'sk-row' },
+      el('div', { class: 'sk' }), el('div', { class: 'sk' }));
+    card.appendChild(row);
+    card.appendChild(el('div', { class: 'sk sk-line' }));
+    card.appendChild(el('div', { class: 'sk sk-line w2' }));
+    card.appendChild(el('div', { class: 'sk sk-line w3' }));
+    return card;
+  }
+  function showSkeleton() {
+    if (!busy) return;
+    results.textContent = '';
+    results.setAttribute('aria-busy', 'true');
+    resetBtn.hidden = false;
+    results.appendChild(skeletonCard());
+    results.appendChild(skeletonCard());
+  }
+  function clearSkeleton() {
+    if (skeletonTimer) { clearTimeout(skeletonTimer); skeletonTimer = null; }
+    results.removeAttribute('aria-busy');
+  }
 
   /* ------------------------------------------------------------- render -- */
   function messageCard(text) {
@@ -188,7 +216,7 @@
           onclick: function () {
             copyText(order.tracking, function () {
               var b = codeBox.querySelector('button');
-              if (b) { b.textContent = 'کپی شد'; b.disabled = true;
+              if (b) { b.textContent = 'کپی شد ✓'; b.disabled = true;
                        setTimeout(function () { b.textContent = 'کپی کد رهگیری';
                                                 b.disabled = false; }, 2000); }
             });
@@ -227,8 +255,9 @@
     var items = el('div', { class: 'track-items' },
       el('span', { class: 'track-label', text: 'اقلام سفارش' }));
     (order.items || []).forEach(function (it) {
-      items.appendChild(el('div', { class: 'track-item',
-        text: (it.name || '') + ' × ' + toFaDigits(it.qty) }));
+      items.appendChild(el('div', { class: 'track-item' },
+        el('span', { class: 'track-item-name', text: it.name || '' }),
+        el('span', { class: 'track-qty', text: '× ' + toFaDigits(it.qty) })));
     });
     card.appendChild(items);
 
@@ -243,6 +272,7 @@
   }
 
   function render(data) {
+    clearSkeleton();
     results.textContent = '';   /* clear everything first */
     resetBtn.hidden = false;
 
@@ -262,6 +292,7 @@
   }
 
   function renderNetworkError() {
+    clearSkeleton();
     results.textContent = '';
     resetBtn.hidden = false;
     results.appendChild(messageCard(MSG.error));
@@ -291,6 +322,7 @@
     busy = true;
     submitBtn.disabled = true;
     submitBtn.textContent = 'در حال جست‌وجو…';
+    skeletonTimer = setTimeout(showSkeleton, 120);
 
     fetch(TRACK_CONFIG.supabaseUrl + '/rest/v1/rpc/track_orders', {
       method: 'POST',
@@ -309,6 +341,7 @@
       .catch(renderNetworkError)
       .then(function () {
         busy = false;
+        clearSkeleton();
         submitBtn.disabled = false;
         submitBtn.textContent = 'جست‌وجو';
       });
@@ -317,6 +350,7 @@
   /* -------------------------------------------------------------- reset -- */
   resetBtn.addEventListener('click', function () {
     results.textContent = '';
+    results.removeAttribute('aria-busy');
     phoneIn.value = '';
     nameIn.value = '';
     resetBtn.hidden = true;

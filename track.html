@@ -34,13 +34,25 @@
 <body>
 
 <main class="track-wrap">
-  <header class="track-brand">
-    <img src="icon.svg" alt="" width="64" height="64">
+
+  <!-- hero: one idea, one primary action below it -->
+  <header class="track-hero">
+    <div class="track-logo">
+      <img src="icon.svg" alt="" width="46" height="46">
+    </div>
     <h1>پیگیری سفارش دلسانا</h1>
-    <p>وضعیت سفارش‌های خود را با شماره موبایل و نام ببینید.</p>
-    <p class="track-privacy">اطلاعات شما فقط برای پیدا کردن سفارش‌تان استفاده می‌شود.</p>
+    <p class="track-sub">وضعیت سفارش‌های خود را با شماره موبایل و نام ببینید.</p>
+    <p class="track-privacy">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="4" y="10" width="16" height="11" rx="2.5"/>
+        <path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+      </svg>
+      اطلاعات شما فقط برای پیدا کردن سفارش‌تان استفاده می‌شود
+    </p>
   </header>
 
+  <!-- the primary action -->
   <form id="track-form" class="card" novalidate>
     <div id="track-error" class="form-error" hidden></div>
     <div class="field">
@@ -54,16 +66,25 @@
              placeholder="مثلاً مریم احمدی">
       <p class="hint">همان نامی که هنگام ثبت سفارش اعلام کرده‌اید</p>
     </div>
-    <button id="track-submit" class="btn primary block" type="submit">جست‌وجو</button>
+    <button id="track-submit" class="btn primary track-submit" type="submit">
+      جست‌وجو
+    </button>
   </form>
 
   <section id="track-results" aria-live="polite"></section>
 
   <div class="track-actions">
-    <a id="track-dm" class="btn block" href="https://ig.me/m/delsana.co"
-       target="_blank" rel="noopener">پیام در دایرکت</a>
-    <button id="track-reset" class="btn ghost block" type="button" hidden>جست‌وجوی جدید</button>
+    <a id="track-dm" class="btn track-dm" href="https://ig.me/m/delsana.co"
+       target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.4 0-2.8-.34-4-.94L3 20l.94-5.5A8.5 8.5 0 1 1 21 11.5z"/>
+      </svg>
+      پیام در دایرکت
+    </a>
+    <button id="track-reset" class="btn ghost track-reset" type="button" hidden>جست‌وجوی جدید</button>
   </div>
+
 </main>
 
 <script src="track.js"></script>
